@@ -44,6 +44,7 @@ export class Channel {
 
 @Entity('channel_categories')
 export class ChannelCategory {
+  @ApiProperty() @Column({ default: true }) isCurrent!: boolean;
   @ApiProperty() @PrimaryColumn({ type: 'int' }) channelId!: number;
   @ApiProperty() @Index('idx_channel_categories_category') @PrimaryColumn({ type: 'int' }) categoryId!: number;
   @ManyToOne(() => Channel, channel => channel.channelCategories, { onDelete: 'CASCADE' }) @JoinColumn({ name: 'channelId', foreignKeyConstraintName: 'fk_cc_channel' }) channel!: Channel;
@@ -61,6 +62,7 @@ export class Stream {
   @ManyToOne(() => Channel, channel => channel.streams, { onDelete: 'CASCADE' }) @JoinColumn({ name: 'channelId', foreignKeyConstraintName: 'fk_stream_channel' }) channel!: Channel;
   @Column({ type: 'varchar', length: 64, select: false }) identityKey!: string;
   @ApiProperty({ nullable: true, type: String }) @Column({ type: 'varchar', length: 255, nullable: true }) feedId!: string | null;
+  @ApiProperty() @Column({ default: true }) isAvailable!: boolean;
   @ApiProperty() @Column({ type: 'varchar', length: 512 }) title!: string;
   @ApiProperty() @Column({ type: 'text' }) url!: string;
   @ApiProperty({ nullable: true, type: String }) @Column({ type: 'varchar', length: 32, nullable: true }) quality!: string | null;

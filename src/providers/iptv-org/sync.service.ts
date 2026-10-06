@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource, In } from 'typeorm';
-import { Category, Channel, ChannelCategory, Country, Stream, StreamStatus } from '../../database/entities';
+import { Category, ChannelPublication, Channel, ChannelCategory, Country, Stream, StreamStatus } from '../../database/entities';
 import { Environment } from '../../config/environment';
 import { IptvOrgClient } from './iptv-org.client';
 import { normalizeSnapshot } from './normalizer';
@@ -47,9 +47,9 @@ export class IptvOrgSyncService {
           catch (error) { await runner.rollbackTransaction(); throw error; }
         }
       };
-      // Remove previously imported channels that have become blocked/NSFW.
+      // Preserve editorial decisions and grants; blocked/NSFW channels become unavailable.
       await batch([...snapshot.excludedIds], async ids => {
-        await runner.manager.delete(Channel, { source, externalId: In(ids) });
+        await runner.manager.update(Channel, { source, externalId: In(ids) }, { isActive: false });
       });
       await batch(snapshot.countries, async items => {
         const repo = runner.manager.getRepository(Country);
@@ -73,10 +73,13 @@ export class IptvOrgSyncService {
             const repo = runner.manager.getRepository(Channel);
             const previous = await repo.findOneBy({ source, externalId: item.externalId });
             const channel = await repo.save(repo.create({ ...previous, ...fields, source, lastSyncedAt: syncedAt }));
-            if (previous) counts.updated++; else counts.created++;
-            await runner.manager.delete(ChannelCategory, { channelId: channel.id });
+            if (previous) counts.updated++; else {
+              counts.created++;
+              await runner.manager.save(ChannelPublication,{ channelId: channel.id, status: 'DRAFT' });
+            }
+            await runner.manager.update(ChannelCategory, { channelId: channel.id }, { isCurrent: false });
             for (const slug of categorySlugs) {
-              await runner.manager.save(ChannelCategory, { channelId: channel.id, categoryId: categories.get(slug)! });
+              await runner.manager.save(ChannelCategory, { channelId: channel.id, categoryId: categories.get(slug)!, isCurrent: true });
             }
             const streamRepo = runner.manager.getRepository(Stream);
             const existing = await streamRepo.createQueryBuilder('s').addSelect('s.identityKey').where('s.channelId = :id', { id: channel.id }).getMany();
@@ -85,12 +88,12 @@ export class IptvOrgSyncService {
             for (const stream of snapshot.streams.get(item.externalId) ?? []) {
               retained.add(stream.identityKey);
               const prior = old.get(stream.identityKey);
-              await streamRepo.save(streamRepo.create({ ...prior, ...stream, channelId: channel.id,
+              await streamRepo.save(streamRepo.create({ ...prior, ...stream, channelId: channel.id, isAvailable: true,
                 status: prior?.status ?? StreamStatus.UNKNOWN, lastCheckedAt: prior?.lastCheckedAt ?? null }));
               counts.streams++;
             }
             const removed = existing.filter(stream => !retained.has(stream.identityKey)).map(stream => stream.id);
-            if (removed.length) await streamRepo.delete(removed);
+            if (removed.length) await streamRepo.update({ id: In(removed) },{ isAvailable: false });
           }
           await runner.commitTransaction();
           stats.created += counts.created; stats.updated += counts.updated; stats.streams += counts.streams;
@@ -107,7 +110,7 @@ export class IptvOrgSyncService {
           .andWhere('(c.lastSyncedAt IS NULL OR c.lastSyncedAt < :at)', { at: syncedAt }).getMany();
         await batch(stale, async items => {
           const ids = items.map(channel => channel.id);
-          await runner.manager.delete(Stream, { channelId: In(ids) });
+          await runner.manager.update(Stream, { channelId: In(ids) }, { isAvailable: false });
           await runner.manager.update(Channel, { id: In(ids) }, { isActive: false });
         });
       }

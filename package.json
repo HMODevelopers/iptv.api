@@ -19,7 +19,8 @@
     "migration:revert": "node scripts/migration.cjs revert",
     "migration:show": "node scripts/migration.cjs show",
     "sync:iptv-org": "ts-node src/cli/sync-iptv-org.ts",
-    "sync:iptv-org:prod": "node dist/cli/sync-iptv-org.js"
+    "sync:iptv-org:prod": "node dist/cli/sync-iptv-org.js",
+    "bootstrap:super-admin": "node scripts/bootstrap-super-admin.cjs"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.0",
@@ -30,12 +31,14 @@
     "@nestjs/swagger": "^11.0.0",
     "@nestjs/throttler": "^6.4.0",
     "@nestjs/typeorm": "^11.0.0",
+    "argon2": "^0.45.1",
     "axios": "^1.12.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "dotenv": "^17.2.0",
     "helmet": "^8.1.0",
     "ipaddr.js": "^2.2.0",
+    "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.14.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
@@ -47,6 +50,7 @@
     "@nestjs/testing": "^11.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.0.0",
     "@types/supertest": "^6.0.0",
     "eslint": "^9.0.0",

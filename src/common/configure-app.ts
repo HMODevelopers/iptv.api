@@ -8,13 +8,13 @@ export function configureApp(app: INestApplication, config: ConfigService<Enviro
   app.setGlobalPrefix(config.get('API_PREFIX', { infer: true }));
   if (config.get('HELMET_ENABLED', { infer: true })) app.use(helmet());
   if (config.get('CORS_ENABLED', { infer: true })) app.enableCors({
-    origin: config.get('CORS_ORIGINS', { infer: true }).split(',').filter(Boolean), methods: ['GET','HEAD','OPTIONS'], credentials: false,
+    origin: config.get('CORS_ORIGINS', { infer: true }).split(',').filter(Boolean), methods: ['GET','HEAD','OPTIONS','POST','PUT','PATCH','DELETE'], credentials: false,
   });
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true, validationError: { target: false, value: false } }));
   app.useGlobalFilters(new HttpExceptionFilter());
-  if (config.get('SWAGGER_ENABLED', { infer: true })) {
+  if (config.get('SWAGGER_ENABLED', { infer: true }) && config.get('NODE_ENV', { infer: true }) !== 'production') {
     const document = SwaggerModule.createDocument(app,new DocumentBuilder().setTitle(config.get('APP_NAME', { infer: true }))
-      .setVersion(config.get('API_VERSION', { infer: true })).setDescription('Catálogo IPTV de fuentes públicas y autorizadas. Streams UNKNOWN hasta verificación.').build());
+      .addBearerAuth().setVersion(config.get('API_VERSION', { infer: true })).setDescription('Catálogo IPTV de fuentes públicas y autorizadas. Streams UNKNOWN hasta verificación.').build());
     SwaggerModule.setup(config.get('SWAGGER_PATH', { infer: true }),app,document);
   }
 }

@@ -1,6 +1,6 @@
 # HMODevelopers IPTV API
 
-Una plataforma de servicios IPTV para administrar y proporcionar acceso estructurado a canales de televisión por internet provenientes de fuentes públicas y autorizadas. Esta primera fase implementa el backend del catálogo; prepara la información que consumirán aplicaciones web, móviles y televisores inteligentes.
+Una plataforma de servicios IPTV para administrar y proporcionar acceso estructurado a canales de televisión por internet provenientes de fuentes públicas y autorizadas. El backend incluye catálogo, autenticación, administración y autorización explícita de contenido; prepara la información que consumirán aplicaciones web, móviles y televisores inteligentes.
 
 ## ¿Qué es HMODevelopers IPTV?
 
@@ -16,17 +16,18 @@ Permite consultar canales internacionales o mexicanos, explorar categorías y pa
 
 - Integración con los seis recursos oficiales de [IPTV-org](https://github.com/iptv-org/api): canales, streams, logos, categorías, países y blocklist.
 - Catálogo internacional persistido; México se selecciona mediante `country=MX`.
-- Exclusión NSFW/DMCA y retiro de canales anteriormente importados que pasan a estar bloqueados.
+- Exclusión NSFW/DMCA y deshabilitación de canales previamente importados que pasan a estar bloqueados, conservando su historial.
 - Sincronización manual por lotes, transacciones, reintentos, timeout, estadísticas y control de ejecución concurrente en MariaDB.
-- Canales con relaciones normalizadas a países/categorías y múltiples streams; eliminación de alternativas retiradas y desactivación de canales desaparecidos.
+- Canales con relaciones normalizadas a países/categorías y múltiples streams; retiro lógico de alternativas retiradas y desactivación de canales desaparecidos.
 - Endpoints GET con búsqueda, filtros, ordenamiento, paginación limitada y documentación OpenAPI.
+- JWT, Argon2id, sesiones revocables, RBAC, auditoría y control de contenido por publicaciones, colecciones y excepciones individuales.
 - Migraciones manuales TypeORM, configuración validada, pruebas unitarias/integración y preparación Docker.
 
 Los streams nuevos tienen estado `UNKNOWN`: no se comprueba su disponibilidad en esta fase. No hay frontend, proxy de video ni retransmisión. Guardar un enlace no garantiza que pueda reproducirse o que exista autorización para su uso.
 
 ## Funcionalidades futuras
 
-Se prevé incorporar múltiples proveedores, listas M3U y proveedores compatibles con Xtream API; EPG, favoritos e historial; usuarios, roles y permisos; reproducción web; verificación de calidad/disponibilidad, monitoreo de fuentes y estadísticas de uso; clientes móviles y para televisores inteligentes. Estas funcionalidades todavía no están implementadas.
+Se prevé incorporar múltiples proveedores, listas M3U y proveedores compatibles con Xtream API; EPG, favoritos e historial; panel administrativo Next.js y reproducción web; verificación de calidad/disponibilidad, monitoreo de fuentes y estadísticas de uso; clientes móviles y para televisores inteligentes. Estas funcionalidades todavía no están implementadas.
 
 ## Arquitectura
 
@@ -44,13 +45,15 @@ src/
   common/         Validación HTTP, errores, URL policy y rate limiting
   config/         Validación de entorno y configuración Nest/TypeORM
   database/
-    entities/     Channel, Stream, Country, Category, ChannelCategory
-    migrations/   1760000000000-InitialCatalog.ts
+    entities/     Catálogo, cuentas, RBAC, sesiones, auditoría y acceso a contenido
+    migrations/   InitialCatalog, SecuritySchema y SecuritySeed
     data-source.ts
   providers/
     provider.ts   Contrato extensible
     iptv-org/     Cliente HTTP, normalización y sincronización
-  cli/            Comando manual de sincronización
+  security/       Autenticación, RBAC, administración y auditoría
+  channel-access/ Autorización de contenido y guard reutilizable
+  cli/            Sincronización y bootstrap interactivo
 scripts/          Wrapper de migraciones TypeScript/compiladas
 test/             Unitarias e integración HTTP/TypeORM aislada
 docs/             Arquitectura y decisiones
@@ -62,7 +65,15 @@ Actualmente se aplican Helmet, CORS configurable con orígenes explícitos, lím
 
 Las credenciales se configuran en `.env`, excluido de Git y del contexto Docker. No se registran errores Axios completos ni parámetros SQL. `synchronize` y `migrationsRun` están desactivados obligatoriamente; el nombre de la base se valida como `hmodevelopers_iptv`. No se crea otra base ni otro contenedor MariaDB. `DB_SSL=true` exige validación de certificado; el servidor debe tener un certificado reconocido por el runtime.
 
-Los endpoints de consulta son públicos. JWT, refresh tokens, sesiones revocables, usuarios, roles/permisos, auditoría, protección administrativa, límites de conexiones, monitoreo y tokens de reproducción son trabajo futuro. Se deberán combinar con controles sobre fuentes autorizadas. El throttling actual es por proceso; para múltiples réplicas necesitará almacenamiento compartido. Swagger puede desactivarse para producción con `SWAGGER_ENABLED=false`.
+El catálogo exige Bearer JWT; solo `/api/health`, login y refresh son públicos. Cada petición comprueba la cuenta activa, la sesión vigente y los roles/permisos actuales en MariaDB. Los tokens no contienen permisos que puedan quedar obsoletos. Desactivar una cuenta, revocar una sesión o cambiar la contraseña invalida inmediatamente sus accesos; los cambios de roles y contenido se aplican en la siguiente consulta.
+
+Las contraseñas usan Argon2id; los refresh se almacenan como HMAC-SHA-256 con un secreto separado, nunca en texto plano. Access dura 15 minutos y la sesión/refresh 7 días por defecto; rotar refresh no extiende la fecha final de la sesión. La rotación usa bloqueos transaccionales sobre usuario y sesión en MariaDB. Reutilizar un refresh anterior revoca esa sesión, incluido el access emitido con ella. Un cliente debe serializar refresh y no reintentar un token ya rotado. Las recomendaciones de hashing y detección de reutilización se fundamentan en [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) y [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html).
+
+Las cuentas nuevas reciben una contraseña temporal proporcionada por el administrador y deben cambiarla antes de consultar contenido o administrar. No hay registro público. El bloqueo de login es temporal y configurable, con errores uniformes. El máximo de sesiones por cuenta revoca las más antiguas al iniciar otra. Auditoría registra actor, acción, módulo, entidad, fecha, IP, resultado y metadatos acotados; excluye contraseñas, tokens y payloads completos.
+
+Helmet incluye CSP. CORS permite orígenes explícitos y los métodos de la API; la autenticación actual usa cabecera Bearer, no cookies. El throttling general y el específico de login/refresh usan memoria por proceso; varias réplicas necesitan un almacén compartido y configuración explícita de proxies de confianza. Swagger queda deshabilitado siempre en `NODE_ENV=production`, incluso si `SWAGGER_ENABLED=true`.
+
+Para un futuro cliente web con cookies, implementar refresh en cookie `HttpOnly`, `Secure`, `SameSite` adecuado al despliegue, alcance/path limitado, eliminación al cerrar sesión y protección CSRF (token y validación de Origin para acciones que cambian estado). Habilitar credenciales CORS únicamente con orígenes explícitos. Esta adaptación aún no está implementada; consultar [OWASP CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html). Usar HTTPS y no poner tokens en URL ni persistirlos en logs.
 
 ## Instalación y configuración
 
@@ -74,7 +85,7 @@ npm install
 
 El repositorio incluye `.env.example`; esta implementación también creó físicamente `.env`. En un clon nuevo, crea tu configuración con `cp .env.example .env`. Si tienes un `.env` existente, conserva sus valores y agrega únicamente variables faltantes.
 
-Edita manualmente `DB_USERNAME` y `DB_PASSWORD`. Se mantienen como marcadores `COLOCAR_USUARIO` y `COLOCAR_PASSWORD`; la API y el sincronizador fallan antes de realizar conexiones mientras permanezcan así. No compartas ni versiones ese archivo.
+Configura las credenciales de MariaDB y completa `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` con dos secretos aleatorios diferentes de al menos 48 caracteres. La API rechaza valores ausentes, cortos, repetitivos o marcadores; no se generaron secretos reales. Edita manualmente `DB_USERNAME` y `DB_PASSWORD` si aún contienen marcadores. Se mantienen como marcadores `COLOCAR_USUARIO` y `COLOCAR_PASSWORD`; la API y el sincronizador fallan antes de realizar conexiones mientras permanezcan así. No compartas ni versiones ese archivo.
 
 ### Variables de entorno
 
@@ -114,6 +125,18 @@ Todas las variables usadas están presentes en ambos archivos. Los booleanos ace
 | `RATE_LIMIT_MAX` | `100` | Solicitudes por ventana |
 | `DOCKER_HOST_PORT` | `3003` | Puerto publicado; verificar antes de desplegar |
 | `DOCKER_DB_NETWORK` | `COLOCAR_RED_DOCKER` | Nombre pendiente de la red existente de `rc_mysql` |
+| `JWT_ACCESS_SECRET` | Marcador pendiente | Secreto aleatorio privado, mínimo 48 caracteres |
+| `JWT_REFRESH_SECRET` | Marcador pendiente | Otro secreto aleatorio independiente |
+| `JWT_ACCESS_TTL_SECONDS` | `900` | Duración access, 60–3600 segundos |
+| `JWT_REFRESH_TTL_SECONDS` | `604800` | Vida absoluta de sesión/refresh, 3600–2592000 segundos |
+| `ARGON2_MEMORY_KIB` | `65536` | Memoria por hash, mínimo 19456 KiB |
+| `ARGON2_TIME_COST` | `3` | Iteraciones, 2–10 |
+| `ARGON2_PARALLELISM` | `1` | Paralelismo, 1–4 |
+| `AUTH_MAX_LOGIN_ATTEMPTS` | `5` | Intentos fallidos antes de bloqueo |
+| `AUTH_LOCK_SECONDS` | `900` | Duración del bloqueo temporal |
+| `AUTH_LOGIN_LIMIT` | `10` | Peticiones por IP/ventana, compartido entre login y refresh |
+| `AUTH_LOGIN_WINDOW_MS` | `60000` | Ventana del límite específico |
+| `AUTH_MAX_SESSIONS` | `10` | Máximo de sesiones vigentes por cuenta |
 
 ### Conexión a MariaDB y migraciones
 
@@ -126,7 +149,7 @@ npm run migration:show
 npm run migration:run
 ```
 
-La migración inicial crea cinco tablas, índices, claves foráneas, claves únicas, timestamps y restricción de estado de streams. No crea una base de datos. MariaDB realiza commits implícitos en DDL: ante un fallo parcial, inspecciona el esquema antes de repetir; una transacción no garantiza revertir todo el DDL.
+La migración histórica inicial crea las cinco tablas del catálogo y permanece intacta. `1791200000000-SecuritySchema.ts` agrega doce tablas de seguridad/contenido y las marcas `streams.isAvailable` / `channel_categories.isCurrent` sin borrar registros IPTV. `1791200000001-SecuritySeed.ts` registra roles y permisos con `INSERT IGNORE` y deja los canales existentes en DRAFT; no publica contenido ni crea cuentas. No crea una base de datos. MariaDB realiza commits implícitos en DDL: ante un fallo parcial, inspecciona el esquema antes de repetir; una transacción no garantiza revertir todo el DDL.
 
 Para desarrollar futuras migraciones:
 
@@ -156,15 +179,15 @@ npm run build
 npm start
 ```
 
-Swagger: `http://localhost:3000/api/docs`. OpenAPI JSON: `/api/docs-json`.
+Swagger en desarrollo: `http://localhost:3000/api/docs`. OpenAPI JSON: `/api/docs-json`. Ejecuta login, copia `accessToken` en **Authorize** y prueba las rutas protegidas. Nunca pegues el refresh en Authorize. En producción no se sirven estos endpoints.
 
 ## Endpoints
 
 | Método y ruta | Resultado |
 | --- | --- |
 | `GET /api/health` | Estado de aplicación/base; 503 si MariaDB no responde |
-| `GET /api/channels` | Lista paginada de canales y categorías |
-| `GET /api/channels/:id` | Detalle con país y categorías; 404 si no existe |
+| `GET /api/channels` | Lista paginada exclusivamente de canales autorizados |
+| `GET /api/channels/:id` | Detalle autorizado; 404 si no existe o no está autorizado |
 | `GET /api/channels/:id/streams` | Canal/logo y alternativas paginadas con metadatos de reproducción |
 | `GET /api/categories` | Catálogo de categorías |
 | `GET /api/countries` | Catálogo de países |
@@ -177,7 +200,7 @@ Swagger: `http://localhost:3000/api/docs`. OpenAPI JSON: `/api/docs-json`.
 /api/channels/1/streams?page=1&limit=20
 ```
 
-`status`: `active` (predeterminado), `inactive`, `all`; describe el estado del canal, no del stream. `sortBy`: `name`, `createdAt`, `lastSyncedAt`. `order`: `ASC` o `DESC`. `page`: 1–1000000; `limit`: 1–100, predeterminado 20. País requiere código de dos letras mayúsculas; categoría usa slug. La búsqueda por nombre es parcial y trata `%`/`_` como caracteres literales. Los parámetros desconocidos o inválidos devuelven 400.
+`status`: `active` (predeterminado), `inactive`, `all`; describe el estado del canal, no del stream. `sortBy`: `name`, `createdAt`, `lastSyncedAt`. `order`: `ASC` o `DESC`. `page`: 1–1000000; `limit`: 1–100, predeterminado 20. País requiere código de dos letras mayúsculas; categoría usa slug. La búsqueda por nombre es parcial y trata `%`/`_` como caracteres literales. Los parámetros desconocidos o inválidos devuelven 400. Para usuarios, `status=all` o `inactive` nunca evita las restricciones: solo se permiten canales publicados y activos. Los totales y filtros se calculan dentro del conjunto autorizado mediante EXISTS SQL, sin filtrar el catálogo completo en memoria.
 
 Las páginas devuelven `{ data, total, page, limit, totalPages }`; la página de streams incluye además `channel`. Los streams entregan URL, feed, calidad, formato inferido, referrer, userAgent, labels, status y lastCheckedAt. Una respuesta vacía es válida si el canal no tiene streams. Los errores siguen `{ statusCode, message, timestamp }` y la limitación responde 429.
 
@@ -218,9 +241,67 @@ npm run test:integration
 
 Las pruebas unitarias cubren normalización, nulos, deduplicación, exclusiones, política URL, configuración y errores/reintentos HTTP. Las de integración levantan Nest con una base **SQL.js en memoria**, usan repositorios/relaciones TypeORM reales y HTTP mediante Supertest: filtros, paginación, validación, seguridad, OpenAPI, idempotencia, reconciliación y rollback. No descargan catálogos reales ni usan MariaDB.
 
-La sincronización automática del esquema existe **solo en esa base efímera de pruebas**. Producción y CLI la rechazan. Validación ejecutada en este entorno con Node.js 22.23.3: `npm run lint` y `npm run build` correctos; `npm run test`: **45 pruebas aprobadas en 5 suites**. También se resolvió la migración compilada y se construyeron los metadatos MariaDB sin abrir conexiones. Node.js se descargó únicamente a un directorio temporal para estas validaciones; no se instaló globalmente.
+La sincronización automática del esquema existe **solo en bases efímeras de pruebas**. Producción y CLI la rechazan. Las pruebas de fase 2 cubren login, bloqueo, expiración JWT, refresh/rotación/reutilización, sesiones, cambio obligatorio de contraseña, RBAC, protección del último administrador, bootstrap, publicaciones, colecciones, grants, IDOR, streams, paginación y conservación editorial durante sincronización. Los metadatos del driver MariaDB se validan sin conexión.
 
-La aplicación/migración todavía requieren validación real contra MariaDB 10.11 tras configurar credenciales; tampoco se ha validado la imagen mediante Docker en este entorno.
+**Validación ejecutada:** `npm run lint` y `npm run build` correctos; `npm run test`: **91 pruebas aprobadas en 7 suites**. Los mensajes de rollback/errores sanitizados de la suite corresponden a escenarios negativos intencionales.
+
+Las pruebas SQL.js no validan los bloqueos concurrentes ni el DDL de MariaDB. Antes del uso operativo, aplicar y comprobar las migraciones en una copia autorizada de MariaDB 10.11 y comprobar refresh simultáneos y bootstrap simultáneo; después aplicar al servidor con respaldo y revisión. Esta implementación no ejecutó migraciones, bootstrap ni despliegues contra el servidor externo.
+
+## Administración de la plataforma
+
+`SUPER_ADMIN` tiene todos los permisos y usa `/api/admin/channels?status=all` para el catálogo completo, incluso canales ocultos. `ADMIN` empieza sin permisos y recibe los necesarios del propietario. `USER` empieza sin permisos administrativos ni contenido. Los roles y permisos viven en MariaDB; los roles reservados no pueden renombrarse ni desactivarse. Los permisos de SUPER_ADMIN y USER están protegidos; los del ADMIN son configurables exclusivamente por SUPER_ADMIN. Se pueden crear roles adicionales.
+
+Solo SUPER_ADMIN cambia roles de cuentas y permisos de roles. Ningún usuario puede modificar sus propios roles. ADMIN no puede modificar cuentas privilegiadas ni revocar sesiones de administradores. No se puede desactivar ni retirar el rol al último SUPER_ADMIN activo. Crear una cuenta concede únicamente USER y rechaza campos ajenos al DTO, incluyendo roles/permisos; la asignación privilegiada se hace después por una ruta separada.
+
+| Familia | Rutas y permisos |
+| --- | --- |
+| Autenticación | `POST /api/auth/login`, `/refresh`, `/logout`, `/logout-all`, `/change-password`; `GET /api/auth/me`, `/sessions`; `DELETE /api/auth/sessions/:id` (solo propias) |
+| Usuarios | `GET /api/users`, `GET /api/users/:id`, `POST /api/users`, `PATCH /api/users/:id`, `PATCH /api/users/:id/status`; permisos `users.read/create/update/disable` |
+| Roles de cuenta | `GET/PUT /api/users/:id/roles`; lectura `users.read`, escritura `permissions.assign` y SUPER_ADMIN |
+| Acceso por cuenta | `GET/PUT /api/users/:id/collections`, `GET/PUT /api/users/:id/channels`; lectura `users.read`, escritura `collections.assign` |
+| RBAC | `GET/POST /api/roles`, `PATCH /api/roles/:id`, `GET /api/permissions`, `GET/PUT /api/roles/:id/permissions`; permisos `roles.*`, `permissions.read/assign`, escrituras exclusivamente SUPER_ADMIN |
+| Colecciones | `GET/POST /api/admin/collections`, `GET/PATCH/DELETE /api/admin/collections/:id`, `GET/PUT /api/admin/collections/:id/channels`, `GET /api/admin/collections/:id/assignments`; permisos `collections.read/create/update/delete` |
+| Catálogo administrativo | `GET /api/admin/channels`, `GET /api/admin/channels/:id`, `GET /api/admin/channels/:id/streams`, `GET/PATCH /api/admin/channels/:id/publication`; requiere ADMIN o SUPER_ADMIN más `channels.read`, `streams.read` o `channels.manage` y `channels.publish/hide` |
+| Sesiones administrativas | `GET/DELETE /api/admin/users/:userId/sessions`, `DELETE /api/admin/users/:userId/sessions/:id`; permisos `sessions.read/revoke` |
+| Auditoría | `GET /api/admin/audit`; permiso `audit.read` |
+| Cliente | `GET /api/me/channels`, `/channels/:id`, `/channels/:id/streams`, `/collections`, `/profile`; siempre usa al usuario autenticado |
+
+El seed registra: `users.read/create/update/disable`, `roles.read/create/update/delete`, `permissions.read/assign`, `channels.read/manage/publish/hide`, `streams.read/manage`, `collections.read/create/update/delete/assign`, `providers.read/manage`, `sync.execute/history`, `sessions.read/revoke`, `audit.read`, `settings.manage`. Los códigos de proveedores/configuración y sincronización reservan autorización para la evolución; no implican que exista administración HTTP de proveedores o un endpoint de sincronización. La sincronización sigue siendo un comando operativo local.
+
+Las listas de usuarios, colecciones y auditoría aceptan `page/limit`. Las rutas de reemplazo usan `{ "ids": [1,2] }`; las de canales individuales usan `{ "channels": [{ "channelId": 1, "accessType": "ALLOW" }] }`. Arrays vacíos revocan/quitan las relaciones correspondientes. Duplicados, IDs inexistentes y campos desconocidos se rechazan. Las operaciones sobre varias relaciones son transaccionales y auditadas.
+
+## Control de contenido
+
+1. Importar IPTV-org mantiene los nuevos canales en DRAFT. La publicación es independiente de `Channel.isActive`.
+2. Consultar el catálogo administrativo y publicar mediante `PATCH /api/admin/channels/:id/publication` con `{ "status": "PUBLISHED" }`. Otros estados son DRAFT, HIDDEN y DISABLED.
+3. Crear una colección, agregar IDs con `PUT /api/admin/collections/:id/channels` en el orden deseado y asignarla con `PUT /api/users/:id/collections`.
+4. Usar ALLOW para autorizar excepciones o DENY para bloquear un canal incluso si pertenece a una colección asignada.
+5. El cliente consulta `/api/me/channels`. La unión de colecciones no produce duplicados. Una colección inactiva o revocada no concede acceso. Sin ALLOW ni colección activa asignada, el usuario obtiene cero canales.
+
+Las rutas heredadas `/api/channels` aplican las mismas reglas, incluso para SUPER_ADMIN: el catálogo completo se consulta exclusivamente en rutas administrativas. Un permiso `channels.read` no concede por sí solo contenido. Un ID no autorizado responde 404, incluidos sus streams. `ChannelAccessModule` expone filtros y validación reutilizables para futuras rutas de EPG, favoritos y exportación M3U.
+
+Eliminar una colección es una desactivación lógica. Revocar una asignación mantiene su fila con `revokedAt`; volver a asignar actualiza esa relación y los eventos quedan en auditoría. La sincronización conserva publicaciones, colecciones y grants. Canales bloqueados/desaparecidos quedan inactivos y streams retirados se conservan con `isAvailable=false` y categorías retiradas del canal con `isCurrent=false`; las consultas excluyen esas relaciones y alternativas retiradas.
+
+Una URL HLS externa pública puede consultarse fuera de esta aplicación. JWT protege el catálogo de nuestra API y no protege el origen externo ni garantiza derechos o reproducción. Fuentes futuras autorizadas podrán integrar tokens de reproducción o un gateway seguro; esta fase no retransmite video ni evade controles de terceros.
+
+## Primer administrador
+
+Antes de iniciar la API, completa los secretos JWT y credenciales, y aplica manualmente las migraciones:
+
+```bash
+npm run migration:show
+npm run migration:run
+npm run bootstrap:super-admin
+npm run start:dev
+```
+
+El bootstrap valida conexión, migraciones pendientes y permisos del sistema. Solicita username, correo, nombre, apellido opcional, contraseña oculta y confirmación. La contraseña exige 12–128 caracteres con mayúsculas, minúsculas, número y símbolo; se almacena solo el hash Argon2id. La cuenta inicial no requiere cambio de contraseña porque tú la eliges. Se registra su creación en auditoría y se confirma solo su username/id.
+
+Se ejecuta en una terminal interactiva; el mismo comando selecciona código TypeScript en desarrollo o código compilado en la imagen. Una transacción con bloqueo del rol SUPER_ADMIN impide dos creaciones simultáneas en MariaDB. Si existe cualquier propietario (incluso inactivo) o una cuenta con ese username/correo, no la sobrescribe ni la eleva. Una nueva ejecución rechaza la creación y conserva el estado; un segundo propietario requiere el procedimiento autenticado: crear cuenta y asignar SUPER_ADMIN desde otro propietario. No hay semillas de credenciales ni contraseña administrativa en archivos de entorno.
+
+## Desarrollo futuro
+
+Panel administrativo Next.js, reproductor web IPTV, EPG, favoritos, administración de proveedores, estadísticas, dispositivos y sesiones avanzadas, tokens de reproducción para fuentes autorizadas, aplicaciones móviles y Smart TV. Ningún frontend, suscripción ni pago se implementó en esta fase.
 
 ## Consideraciones legales
 

@@ -1,3 +1,4 @@
+import { Public } from '../security/guards';
 import { Controller, Get, Module, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiOkResponse, ApiProperty, ApiServiceUnavailableResponse, ApiTags } from '@nestjs/swagger';
@@ -12,7 +13,7 @@ export class HealthResponse {
 @ApiTags('Sistema') @Controller('health')
 class HealthController {
   constructor(private readonly db: DataSource, private readonly config: ConfigService<Environment,true>) {}
-  @Get() @ApiOkResponse({ type: HealthResponse }) @ApiServiceUnavailableResponse({ description: 'MariaDB no disponible' })
+  @Public() @Get() @ApiOkResponse({ type: HealthResponse }) @ApiServiceUnavailableResponse({ description: 'MariaDB no disponible' })
   async health() {
     try { await this.db.query('SELECT 1'); }
     catch { throw new ServiceUnavailableException('Base de datos no disponible'); }

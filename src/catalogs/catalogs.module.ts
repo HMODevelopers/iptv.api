@@ -1,9 +1,9 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { InjectRepository, TypeOrmModule } from '@nestjs/typeorm';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Repository } from 'typeorm';
 import { Category, Country } from '../database/entities';
-@ApiTags('Catálogos') @Controller()
+@ApiBearerAuth() @ApiTags('Catálogos') @Controller()
 class CatalogsController {
   constructor(@InjectRepository(Category) private readonly categories: Repository<Category>,
     @InjectRepository(Country) private readonly countries: Repository<Country>) {}
