@@ -12,6 +12,18 @@ export interface Principal {
   id: number; sessionId: string; roles: string[]; permissions: string[]; requiresPasswordChange: boolean;
 }
 export const isSuper = (actor: Principal) => actor.roles.includes('SUPER_ADMIN');
+// Only server-authenticated principals may enter this policy; request DTOs never supply roles.
+export function hasAnyRole(actor: Principal, roles: string[]) {
+  return isSuper(actor) || roles.some(role => actor.roles.includes(role));
+}
+export function catalogPrivileges(actor: Principal, scope: 'viewer' | 'administrative' = 'viewer', permission = 'channels.read') {
+  if (scope === 'administrative') {
+    if (!hasAnyRole(actor,['ADMIN'])) throw new ForbiddenException('Rol requerido');
+    requirePermission(actor,permission);
+  }
+  const global = isSuper(actor) || scope === 'administrative';
+  return { unrestrictedContent: global, includeUnavailableStreams: global, defaultChannelState: global ? 'all' : 'active' } as const;
+}
 export function requirePermission(actor: Principal, permission: string) {
   if (!isSuper(actor) && !actor.permissions.includes(permission)) throw new ForbiddenException('Permiso requerido');
 }

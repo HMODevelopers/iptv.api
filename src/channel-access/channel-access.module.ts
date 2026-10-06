@@ -6,7 +6,7 @@ export class ChannelAccessGuard implements CanActivate {
   constructor(private readonly access: ChannelAccessService) {}
   async canActivate(ctx: ExecutionContext) {
     const req = ctx.switchToHttp().getRequest<AuthRequest>();
-    await this.access.assert(req.principal.id,Number(req.params.id)); return true;
+    await this.access.assert(req.principal,Number(req.params.id)); return true;
   }
 }
 @Global() @Module({ providers: [ChannelAccessService,ChannelAccessGuard], exports: [ChannelAccessService,ChannelAccessGuard] })

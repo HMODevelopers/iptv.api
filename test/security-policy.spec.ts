@@ -7,7 +7,7 @@ import { authTestEnvironment } from './auth-fixture';
 import { ENTITIES } from '../src/database/entities';
 import { SecuritySchema1791200000000 } from '../src/database/migrations/1791200000000-SecuritySchema';
 import { SecuritySeed1791200000001 } from '../src/database/migrations/1791200000001-SecuritySeed';
-import { PERMISSION_CODES, requirePermission } from '../src/security/policy';
+import { catalogPrivileges, hasAnyRole, PERMISSION_CODES, requirePermission } from '../src/security/policy';
 class OfflineMariaDb extends DataSource { prepare() { return this.buildMetadatas(); } }
 describe('Políticas y migraciones de seguridad', () => {
   it.each(['short','a'.repeat(64),'COLOCAR_SECRETO_ALEATORIO_ACCESS_48_CARACTERES_MINIMO'])('rechaza secreto de configuración inseguro', secret => {
@@ -28,6 +28,19 @@ describe('Políticas y migraciones de seguridad', () => {
     const actor = { id: 1,sessionId: '',roles: ['USER'],permissions: [],requiresPasswordChange: false };
     expect(() => requirePermission(actor,'users.read')).toThrow('Permiso requerido');
     expect(() => requirePermission({ ...actor,roles: ['SUPER_ADMIN'] },'users.read')).not.toThrow();
+  });
+  it('centraliza privilegios globales y exige rol más permiso para consultas administrativas', () => {
+    const actor = { id: 1,sessionId: 'session',roles: ['USER'],permissions: [],requiresPasswordChange: false };
+    expect(catalogPrivileges(actor)).toEqual({ unrestrictedContent: false,includeUnavailableStreams: false,defaultChannelState: 'active' });
+    expect(catalogPrivileges({ ...actor,roles: ['SUPER_ADMIN'] })).toEqual({ unrestrictedContent: true,includeUnavailableStreams: true,defaultChannelState: 'all' });
+    expect(hasAnyRole({ ...actor,roles: ['SUPER_ADMIN'] },['ADMIN'])).toBe(true);
+    expect(() => requirePermission({ ...actor,roles: ['SUPER_ADMIN'] },'future.module.permission')).not.toThrow();
+    expect(() => catalogPrivileges({ ...actor,permissions: ['channels.read'] },'administrative')).toThrow('Rol requerido');
+    const admin = { ...actor,roles: ['ADMIN'] };
+    expect(() => catalogPrivileges(admin,'administrative')).toThrow('Permiso requerido');
+    expect(catalogPrivileges({ ...admin,permissions: ['channels.read'] },'administrative').unrestrictedContent).toBe(true);
+    expect(catalogPrivileges({ ...admin,permissions: ['channels.read'] }).unrestrictedContent).toBe(false);
+    expect(() => catalogPrivileges({ ...admin,permissions: ['channels.read'] },'administrative','streams.read')).toThrow('Permiso requerido');
   });
   it('construye metadatos con el driver MariaDB sin conexión ni synchronize', async () => {
     const db = new OfflineMariaDb({ type: 'mariadb',host: '127.0.0.1',username: 'offline',password: 'offline',database: 'hmodevelopers_iptv',entities: ENTITIES,synchronize: false });

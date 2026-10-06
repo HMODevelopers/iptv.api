@@ -4,7 +4,7 @@ import { AuditService } from './audit.service';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
-import { Principal, requirePermission } from './policy';
+import { hasAnyRole, Principal, requirePermission } from './policy';
 export interface AuthRequest extends Request { principal: Principal }
 export const Public = () => SetMetadata('security.public',true);
 export const PasswordChangeAllowed = () => SetMetadata('security.password-change',true);
@@ -46,7 +46,7 @@ export class RolesGuard implements CanActivate {
   async canActivate(ctx: ExecutionContext) {
     const roles = this.reflector.getAllAndOverride<string[]>('security.roles',[ctx.getHandler(),ctx.getClass()]);
     const req = ctx.switchToHttp().getRequest<AuthRequest>();
-    if (roles && !roles.some(role => req.principal.roles.includes(role))) {
+    if (roles && !hasAnyRole(req.principal,roles)) {
       await this.audit.record(this.db.manager,req.principal.id,'security.role.denied','route',null,req.ip,'DENIED',{ required: roles, route: String(req.route?.path ?? '').slice(0,200) });
       throw new ForbiddenException('Rol requerido');
     }

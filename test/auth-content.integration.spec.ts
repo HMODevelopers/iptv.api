@@ -63,6 +63,90 @@ describe('Fase 2: HTTP, JWT y persistencia real TypeORM (SQL.js aislado)', () =>
     for (const [position,channelId] of ids.entries()) await db.manager.save(ChannelCollectionItem,{ collectionId: col.id,channelId,position });
     await db.manager.save(UserChannelCollection,{ userId: user.id,collectionId: col.id,assignedBy: owner.id,assignedAt: new Date(),revokedAt: null }); return col;
   };
+  it('SUPER_ADMIN ve todos los estados, sin grants, incluso DENY y streams retirados', async () => {
+    await db.manager.update(ChannelPublication,{ channelId: 2 },{ status: 'DRAFT' });
+    await db.manager.update(ChannelPublication,{ channelId: 3 },{ status: 'DISABLED' });
+    await db.manager.delete(ChannelPublication,{ channelId: 1 });
+    await db.manager.update(Stream,{ channelId: 5 },{ isAvailable: false });
+    await db.manager.save(UserChannelAccess,{ userId: owner.id,channelId: 4,accessType: 'DENY' });
+    const publications = await db.manager.find(ChannelPublication);
+    for (const base of ['/api/channels','/api/me/channels','/api/admin/channels']) {
+      const list = await http().get(base).set(authorize(ownerToken)).expect(200);
+      expect(list.body.total).toBe(5);
+      expect((await http().get(`${base}?status=inactive`).set(authorize(ownerToken)).expect(200)).body.data.map((c: { id: number }) => c.id)).toEqual([5]);
+      expect((await http().get(`${base}?status=active`).set(authorize(ownerToken)).expect(200)).body.total).toBe(4);
+      for (let id = 1; id <= 5; id++) {
+        await http().get(`${base}/${id}`).set(authorize(ownerToken)).expect(200);
+        const streams = await http().get(`${base}/${id}/streams`).set(authorize(ownerToken)).expect(200);
+        expect(streams.body.total).toBe(1);
+        if (id === 5) expect(streams.body.data[0].isAvailable).toBe(false);
+      }
+      await http().get(`${base}/999/streams`).set(authorize(ownerToken)).expect(404);
+    }
+    expect(await db.manager.find(ChannelPublication)).toEqual(publications);
+    expect(await db.manager.count(UserChannelCollection)).toBe(0);
+  });
+  it.each(['revoked','inactive','role removed','role inactive'])('SUPER_ADMIN pierde acceso inmediatamente: %s', async reason => {
+    if (reason === 'revoked') await db.manager.update(AuthSession,{ userId: owner.id },{ revokedAt: new Date() });
+    if (reason === 'inactive') await db.manager.update(User,owner.id,{ isActive: false });
+    if (reason === 'role removed') await db.manager.delete(UserRole,{ userId: owner.id });
+    if (reason === 'role inactive') await db.manager.update(Role,{ name: 'SUPER_ADMIN' },{ isActive: false });
+    const unauthenticated = reason === 'revoked' || reason === 'inactive';
+    for (const base of ['/api/channels','/api/me/channels','/api/admin/channels']) {
+      const res = await http().get(base).set(authorize(ownerToken)).expect(unauthenticated ? 401 : base.includes('/admin/') ? 403 : 200);
+      if (!unauthenticated && !base.includes('/admin/')) expect(res.body.total).toBe(0);
+    }
+  });
+  it('permisos nuevos no requieren enlaces para SUPER_ADMIN y seed conserva asignaciones', async () => {
+    const { requirePermission } = await import('../src/security/policy');
+    const permission = await db.manager.save(Permission,{ code: 'future.read',description: 'Future',module: 'future' });
+    const superRole = await db.manager.findOneByOrFail(Role,{ name: 'SUPER_ADMIN' });
+    await db.manager.delete(RolePermission,{ roleId: superRole.id });
+    const actor = await auth.authenticate(ownerToken);
+    expect(actor.permissions).not.toContain('future.read');
+    expect(() => requirePermission(actor,'future.read')).not.toThrow();
+    expect((await http().get('/api/admin/audit').set(authorize(ownerToken)).expect(200)).body.data).toBeDefined();
+    await collection([1]); await allow(2);
+    const assignments = await db.manager.find(UserChannelCollection);
+    const grants = await db.manager.find(UserChannelAccess);
+    const users = await db.manager.count(User);
+    await seedSecurity(db.manager); await seedSecurity(db.manager);
+    expect(await db.manager.find(UserChannelCollection)).toEqual(assignments);
+    expect(await db.manager.find(UserChannelAccess)).toEqual(grants);
+    expect(await db.manager.count(User)).toBe(users);
+    expect(await db.manager.countBy(RolePermission,{ roleId: superRole.id,permissionId: permission.id })).toBe(1);
+    expect((await db.manager.find(Role)).map(r => r.name).sort()).toEqual(['ADMIN','SUPER_ADMIN','USER']);
+  });
+  it('ADMIN con permisos administrativos sigue sujeto a autorización de espectador', async () => {
+    const role = await db.manager.findOneByOrFail(Role,{ name: 'ADMIN' });
+    for (const code of ['channels.read','streams.read']) {
+      const permission = await db.manager.findOneByOrFail(Permission,{ code });
+      await db.manager.save(RolePermission,{ roleId: role.id,permissionId: permission.id });
+    }
+    await db.manager.save(UserChannelAccess,{ userId: admin.id,channelId: 1,accessType: 'ALLOW' });
+    await db.manager.save(UserChannelAccess,{ userId: admin.id,channelId: 4,accessType: 'ALLOW' });
+    for (const base of ['/api/channels','/api/me/channels']) {
+      expect((await http().get(`${base}?status=all`).set(authorize(adminToken)).expect(200)).body.total).toBe(1);
+      await http().get(`${base}/4`).set(authorize(adminToken)).expect(404);
+      await http().get(`${base}/4/streams`).set(authorize(adminToken)).expect(404);
+    }
+    await db.manager.update(Stream,{ channelId: 4 },{ isAvailable: false });
+    expect((await http().get('/api/admin/channels/4/streams').set(authorize(adminToken)).expect(200)).body.total).toBe(1);
+    const streamPermission = await db.manager.findOneByOrFail(Permission,{ code: 'streams.read' });
+    await db.manager.delete(RolePermission,{ roleId: role.id,permissionId: streamPermission.id });
+    await http().get('/api/admin/channels/4/streams').set(authorize(adminToken)).expect(403);
+  });
+  it('USER no administra aun con permisos RBAC y no falsifica principal mediante filtros', async () => {
+    const role = await db.manager.findOneByOrFail(Role,{ name: 'USER' });
+    for (const permission of await db.manager.find(Permission)) await db.manager.save(RolePermission,{ roleId: role.id,permissionId: permission.id });
+    for (const route of ['/api/users','/api/roles','/api/permissions','/api/admin/collections','/api/admin/channels','/api/admin/audit',`/api/admin/users/${owner.id}/sessions`]) {
+      await http().get(route).set(authorize(userToken)).expect(403);
+      await http().get(route).set(authorize(ownerToken)).expect(200);
+    }
+    for (const query of ['roles=SUPER_ADMIN','userId=1','scope=administrative','status=all&actor=SUPER_ADMIN']) {
+      await http().get(`/api/channels?${query}`).set(authorize(userToken)).expect(400);
+    }
+  });
   it('inicia sesión, no expone hash, no almacena tokens y no tiene registro público', async () => {
     const res = await login(); expect(res.status).toBe(201); expect(res.body.accessToken).toBeDefined();
     const profile = await http().get('/api/auth/me').set(authorize(res.body.accessToken)).expect(200);

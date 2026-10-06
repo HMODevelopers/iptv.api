@@ -58,6 +58,26 @@ describe('Integración HTTP + TypeORM + sincronización (SQL.js aislado)', () =>
     token = (await app.get(AuthService).login({ username: 'catalog', password: 'Catalog-Test!123' })).accessToken;
   });
   afterAll(async () => { if (app) await app.close(); });
+  it('SUPER_ADMIN conserva acceso global después de sincronizar sin modificar privilegios ni decisiones editoriales', async () => {
+    const user = await db.manager.save(User,{ username: 'owner',email: 'owner@test.dev',firstName: 'Owner',passwordHash: await app.get(AuthService).hash('Owner-Secure!123'),requiresPasswordChange: false });
+    const role = await db.manager.findOneByOrFail(Role,{ name: 'SUPER_ADMIN' });
+    await db.manager.save(UserRole,{ userId: user.id,roleId: role.id });
+    const accessToken = (await app.get(AuthService).login({ username: 'owner',password: 'Owner-Secure!123' })).accessToken;
+    await db.manager.update(ChannelPublication,{ channelId: 1 },{ status: 'HIDDEN' });
+    await db.manager.save(UserChannelAccess,{ userId: user.id,channelId: 1,accessType: 'DENY' });
+    const raw = fixture(); raw.channels.push({ id: 'New.mx',name: 'New',country: 'MX',categories: [],is_nsfw: false }); raw.streams = [];
+    client.fetchSnapshot.mockResolvedValue(raw);
+    for (let i = 0; i < 2; i++) {
+      await service.sync();
+      for (const base of ['/api/channels','/api/me/channels','/api/admin/channels']) {
+        expect((await request(app.getHttpServer()).get(base).set('Authorization',`Bearer ${accessToken}`).expect(200)).body.total).toBe(3);
+        expect((await request(app.getHttpServer()).get(`${base}/1/streams`).set('Authorization',`Bearer ${accessToken}`).expect(200)).body.total).toBe(1);
+      }
+    }
+    expect((await db.manager.findOneByOrFail(ChannelPublication,{ channelId: 1 })).status).toBe('HIDDEN');
+    expect((await app.get(AuthService).authenticate(accessToken)).roles).toEqual(['SUPER_ADMIN']);
+    expect(await db.manager.countBy(UserChannelCollection,{ userId: user.id })).toBe(0);
+  });
   it('sincroniza dos veces sin duplicados y conserva estado de verificación', async () => {
     const stream = await db.getRepository(Stream).findOneByOrFail({ channelId: 1 });
     await db.getRepository(Stream).update(stream.id,{ status: StreamStatus.OFFLINE, lastCheckedAt: new Date() });

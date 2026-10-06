@@ -22,9 +22,9 @@ function validId(id: number): number {
 export class ChannelsController {
   constructor(private readonly service: ChannelsService) {}
   @Get() @ApiOkResponse({ type: ChannelPage })
-  list(@Query() query: ChannelQuery, @CurrentUser() actor: Principal) { return this.service.list(query,actor.id); }
+  list(@Query() query: ChannelQuery, @CurrentUser() actor: Principal) { return this.service.list(query,actor); }
   @Get(':id') @ApiOkResponse({ type: Channel }) @ApiNotFoundResponse({ description: 'Canal no encontrado' })
-  find(@Param('id',ParseIntPipe) id: number, @CurrentUser() actor: Principal) { return this.service.find(validId(id),actor.id); }
+  find(@Param('id',ParseIntPipe) id: number, @CurrentUser() actor: Principal) { return this.service.find(validId(id),actor); }
   @Get(':id/streams') @ApiOkResponse({ type: StreamsPage }) @ApiNotFoundResponse({ description: 'Canal no encontrado' })
-  streams(@Param('id',ParseIntPipe) id: number, @Query() query: PageQuery, @CurrentUser() actor: Principal) { return this.service.findStreams(validId(id),query,actor.id); }
+  streams(@Param('id',ParseIntPipe) id: number, @Query() query: PageQuery, @CurrentUser() actor: Principal) { return this.service.findStreams(validId(id),query,actor); }
 }

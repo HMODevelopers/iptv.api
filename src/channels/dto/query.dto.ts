@@ -20,8 +20,8 @@ export class ChannelQuery extends PageQuery {
   // eslint-disable-next-line no-control-regex -- Reject control characters in user input.
   @IsOptional() @IsString() @MaxLength(100) @Matches(/^[^\x00-\x1f\x7f]*$/)
   @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value) search?: string;
-  @ApiPropertyOptional({ enum: ChannelState, default: ChannelState.ACTIVE })
-  @IsEnum(ChannelState) status: ChannelState = ChannelState.ACTIVE;
+  @ApiPropertyOptional({ enum: ChannelState, description: 'Omitido: all para catálogo global; active para espectadores' })
+  @IsOptional() @IsEnum(ChannelState) status?: ChannelState;
   @ApiPropertyOptional({ enum: ChannelSort, default: ChannelSort.NAME })
   @IsEnum(ChannelSort) sortBy: ChannelSort = ChannelSort.NAME;
   @ApiPropertyOptional({ enum: SortOrder, default: SortOrder.ASC })

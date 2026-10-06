@@ -1,10 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, SelectQueryBuilder } from 'typeorm';
 import { Channel, ChannelCollection, ChannelCollectionItem, ChannelPublication, UserChannelAccess, UserChannelCollection } from '../database/entities';
+import { catalogPrivileges, Principal } from '../security/policy';
 @Injectable()
 export class ChannelAccessService {
   constructor(private readonly db: DataSource) {}
-  restrict(qb: SelectQueryBuilder<Channel>, userId: number, alias = 'channel') {
+  restrict(qb: SelectQueryBuilder<Channel>, actor: Principal, alias = 'channel') {
+    if (catalogPrivileges(actor).unrestrictedContent) return qb;
+    const userId = actor.id;
     // EXISTS avoids duplicate rows and ensures pagination totals count authorized channels only.
     return qb.andWhere(`${alias}.isActive = :contentActive`,{ contentActive: true })
       .andWhere(`EXISTS (SELECT 1 FROM channel_publications pub WHERE pub.channelId = ${alias}.id AND pub.status = :published)`,{ published: 'PUBLISHED' })
@@ -14,8 +17,8 @@ export class ChannelAccessService {
         INNER JOIN user_channel_collections assignment ON assignment.collectionId = col.id AND assignment.userId = :contentUser AND assignment.revokedAt IS NULL
         WHERE item.channelId = ${alias}.id))`,{ allow: 'ALLOW' });
   }
-  async assert(userId: number, id: number) {
-    if (!await this.restrict(this.db.getRepository(Channel).createQueryBuilder('channel'),userId).andWhere('channel.id = :id',{ id }).getOne()) {
+  async assert(actor: Principal, id: number) {
+    if (!await this.restrict(this.db.getRepository(Channel).createQueryBuilder('channel'),actor).andWhere('channel.id = :id',{ id }).getOne()) {
       throw new NotFoundException('Canal no encontrado');
     }
   }

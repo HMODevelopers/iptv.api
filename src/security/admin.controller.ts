@@ -4,11 +4,11 @@ import { PageQuery } from '../channels/dto/query.dto';
 import { AuthService } from './auth.service';
 import { AdminService } from './admin.service';
 import { AuditService } from './audit.service';
-import { AuthRequest, CurrentUser, Permissions } from './guards';
+import { AuthRequest, CurrentUser, Permissions, Roles } from './guards';
 import { Principal } from './policy';
 import { ChannelGrantsDto, CreateCollectionDto, CreateRoleDto, CreateUserDto, IdsDto, StatusDto, UpdateCollectionDto, UpdateRoleDto, UpdateUserDto } from './dto';
 
-@ApiTags('Usuarios') @ApiBearerAuth() @Controller('users')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Usuarios') @ApiBearerAuth() @Controller('users')
 export class UsersController {
   constructor(private readonly admin: AdminService) {}
   @Get() @Permissions('users.read') list(@Query() q: PageQuery) { return this.admin.users(q); }
@@ -23,7 +23,7 @@ export class UsersController {
   @Get(':id/channels') @Permissions('users.read') userChannels(@Param('id',ParseIntPipe) id: number) { return this.admin.userChannels(id); }
   @Put(':id/channels') @Permissions('collections.assign') setChannels(@CurrentUser() a: Principal, @Param('id',ParseIntPipe) id: number, @Body() dto: ChannelGrantsDto, @Req() req: AuthRequest) { return this.admin.setChannels(a,id,dto,req.ip); }
 }
-@ApiTags('Roles') @ApiBearerAuth() @Controller('roles')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Roles') @ApiBearerAuth() @Controller('roles')
 export class RolesController {
   constructor(private readonly admin: AdminService) {}
   @Get() @Permissions('roles.read') list() { return this.admin.roles(); }
@@ -32,12 +32,12 @@ export class RolesController {
   @Get(':id/permissions') @Permissions('permissions.read') permissions(@Param('id',ParseIntPipe) id: number) { return this.admin.rolePermissions(id); }
   @Put(':id/permissions') @Permissions('permissions.assign') assign(@CurrentUser() a: Principal, @Param('id',ParseIntPipe) id: number, @Body() dto: IdsDto, @Req() req: AuthRequest) { return this.admin.setPermissions(a,id,dto.ids,req.ip); }
 }
-@ApiTags('Permisos') @ApiBearerAuth() @Controller('permissions')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Permisos') @ApiBearerAuth() @Controller('permissions')
 export class PermissionsController {
   constructor(private readonly admin: AdminService) {}
   @Get() @Permissions('permissions.read') list() { return this.admin.permissions(); }
 }
-@ApiTags('Colecciones administrativas') @ApiBearerAuth() @Controller('admin/collections')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Colecciones administrativas') @ApiBearerAuth() @Controller('admin/collections')
 export class CollectionsController {
   constructor(private readonly admin: AdminService) {}
   @Get() @Permissions('collections.read') list(@Query() q: PageQuery) { return this.admin.collections(q); }
@@ -49,14 +49,14 @@ export class CollectionsController {
   @Put(':id/channels') @Permissions('collections.update') assign(@CurrentUser() a: Principal, @Param('id',ParseIntPipe) id: number, @Body() dto: IdsDto, @Req() req: AuthRequest) { return this.admin.setCollectionChannels(a,id,dto.ids,req.ip); }
   @Get(':id/assignments') @Permissions('collections.read') assignments(@Param('id',ParseIntPipe) id: number) { return this.admin.collectionAssignments(id); }
 }
-@ApiTags('Sesiones administrativas') @ApiBearerAuth() @Controller('admin/users/:userId/sessions')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Sesiones administrativas') @ApiBearerAuth() @Controller('admin/users/:userId/sessions')
 export class SessionsController {
   constructor(private readonly auth: AuthService) {}
   @Get() @Permissions('sessions.read') list(@Param('userId',ParseIntPipe) id: number) { return this.auth.sessions(id); }
   @Delete(':id') @Permissions('sessions.revoke') revoke(@CurrentUser() a: Principal, @Param('userId',ParseIntPipe) userId: number, @Param('id',ParseUUIDPipe) id: string, @Req() req: AuthRequest) { return this.auth.revoke(a,id,req.ip,userId); }
   @Delete() @Permissions('sessions.revoke') all(@CurrentUser() a: Principal, @Param('userId',ParseIntPipe) userId: number, @Req() req: AuthRequest) { return this.auth.revoke(a,null,req.ip,userId); }
 }
-@ApiTags('Auditoría') @ApiBearerAuth() @Controller('admin/audit')
+@Roles('SUPER_ADMIN','ADMIN') @ApiTags('Auditoría') @ApiBearerAuth() @Controller('admin/audit')
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
   @Get() @Permissions('audit.read') async list(@Query() q: PageQuery) {
