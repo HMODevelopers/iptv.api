@@ -1,0 +1,1 @@
+module.exports = { testEnvironment: 'node', testMatch: ['**/test/**/*.spec.ts'], transform: { '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json' }] }, collectCoverageFrom: ['src/**/*.ts', '!src/main.ts', '!src/cli/**', '!src/database/migrations/**'] };

@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    image: hmodevelopers/iptv-api:local
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_HOST: 0.0.0.0
+      DB_HOST: rc_mysql
+      DB_SYNCHRONIZE: 'false'
+      TYPEORM_MIGRATIONS_RUN: 'false'
+    ports:
+      - '${DOCKER_HOST_PORT:-3003}:3000'
+    networks:
+      - database
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+networks:
+  database:
+    external: true
+    name: '${DOCKER_DB_NETWORK:?Configura la red existente de rc_mysql}'

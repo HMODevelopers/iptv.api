@@ -1,0 +1,61 @@
+{
+  "name": "hmodevelopers-iptv-api",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "test": "jest --runInBand",
+    "test:integration": "jest --runInBand --testPathPatterns=integration",
+    "migration:generate": "node scripts/migration.cjs generate",
+    "migration:create": "node scripts/migration.cjs create",
+    "migration:run": "node scripts/migration.cjs run",
+    "migration:revert": "node scripts/migration.cjs revert",
+    "migration:show": "node scripts/migration.cjs show",
+    "sync:iptv-org": "ts-node src/cli/sync-iptv-org.ts",
+    "sync:iptv-org:prod": "node dist/cli/sync-iptv-org.js"
+  },
+  "dependencies": {
+    "@nestjs/axios": "^4.0.0",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/swagger": "^11.0.0",
+    "@nestjs/throttler": "^6.4.0",
+    "@nestjs/typeorm": "^11.0.0",
+    "axios": "^1.12.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "dotenv": "^17.2.0",
+    "helmet": "^8.1.0",
+    "ipaddr.js": "^2.2.0",
+    "mysql2": "^3.14.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.26"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^6.0.0",
+    "eslint": "^9.0.0",
+    "jest": "^30.0.0",
+    "sql.js": "^1.13.0",
+    "supertest": "^7.1.0",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
