@@ -30,7 +30,7 @@ describe('Fase 2: HTTP, JWT y persistencia real TypeORM (SQL.js aislado)', () =>
   const login = (username = 'viewer') => http().post('/api/auth/login').send({ username,password });
   const authorize = (token: string) => ({ Authorization: `Bearer ${token}` });
   beforeAll(async () => {
-    const env = { ...validateEnvironment({ ...parse(readFileSync('.env.example')), NODE_ENV: 'test' }), ...secrets };
+    const env = { ...validateEnvironment({ ...{ ...parse(readFileSync('.env.example')), PROVIDER_CREDENTIALS_KEY: Buffer.alloc(32,7).toString('base64') }, NODE_ENV: 'test' }), ...secrets };
     const module = await Test.createTestingModule({ imports: [
       ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true, load: [() => env] }),
       TypeOrmModule.forRoot({ type: 'sqljs', entities: ENTITIES, synchronize: true, dropSchema: true, autoSave: false }),

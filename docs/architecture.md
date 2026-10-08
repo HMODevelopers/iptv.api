@@ -1,52 +1,77 @@
-# Arquitectura y evolución
+# Arquitectura multiproveedor
 
-El catálogo persistido desacopla los clientes de la disponibilidad del proveedor. La API HTTP no importa ni ejecuta el módulo de sincronización. El comando CLI usa un contexto Nest sin servidor HTTP; descarga y valida todos los recursos antes de escribir en la base de datos.
+El catálogo persistido desacopla al cliente de las fuentes. `ProvidersModule` incorpora administración y sincronización HTTP; el CLI IPTV-org conserva compatibilidad y utiliza la misma clase `ProviderSyncEngine`. No hay un segundo motor de persistencia ni publicación automática.
 
 ```text
-Fuentes IPTV públicas/autorizadas
-           ↓ CatalogProvider
-Integración HTTP (timeout, reintentos, host y DNS autorizados)
-           ↓
-Normalización (NSFW/DMCA, URLs, relaciones, deduplicación)
-           ↓
-Sincronización TypeORM (lotes + transacciones + exclusión concurrente)
-           ↓
-MariaDB hmodevelopers_iptv
-           ↓
-REST / OpenAPI → clientes web, móviles y TV
+IPTV-org / M3U URL / M3U upload / Manual
+              ↓ AdapterRegistry → ProviderAdapter
+              ↓ NormalizedSnapshot (contrato neutral)
+              ↓ ProviderSyncEngine (reserva, descarga, lotes, reconciliación)
+Provider → ProviderChannel → Channel ← publicaciones / colecciones / grants
+                ↓ Stream (procedencia, prioridad, disponibilidad)
+              ↓ REST con JWT / roles / permisos / autorización editorial
 ```
 
-## Modelo
+## Auditoría del modelo anterior
 
-- `Channel`: identidad `(source, externalId)`, país opcional, metadatos y estado del canal.
-- `Country`: código ISO de dos letras; idiomas en arreglo JSON.
-- `Category`: slug único; descripción y fechas.
-- `ChannelCategory`: clave primaria compuesta; relación muchos a muchos, sin listas separadas por comas.
-- `Stream`: alternativas por canal, feed opcional y clave SHA-256 de `[feedId, URL normalizada]`. Incluye formato deducido de la extensión, calidad, headers sugeridos, labels y estado de verificación.
+`CatalogProvider` y `ProviderSnapshot` describían los seis recursos específicos de IPTV-org. `normalizeSnapshot` exigía países, categorías y blocklist; eso no constituye un contrato válido para M3U. Channel tenía identidad `(source, externalId)` y Stream unicidad `(channelId, identityKey)`. El sincronizador modificaba todas las alternativas de cada canal y desactivaba canales por source, por lo que no era seguro compartir un canal entre fuentes. Solo había importación CLI y permisos reservados, sin administración de proveedores ni historial persistente.
 
-Los arreglos de idiomas y labels se serializan como JSON (`simple-json`, TEXT compatible con MariaDB 10.11). No son relaciones con otras entidades en esta fase. Las fechas utilizan UTC. La sincronización conserva canales, streams y relaciones de categorías; marca disponibilidad lógica. Los FK de seguridad restringen borrados físicos de recursos relacionados. Eliminar un país deja `countryCode` nulo.
+Se reutilizan el cliente oficial (retries, timeout, DNS, bloqueo de redirects/proxies), normalizador (NSFW/DMCA), entidades del catálogo, publicaciones DRAFT, política global de SUPER_ADMIN, guards administrativos, auditoría, paginación y migraciones manuales. Las tres migraciones históricas se mantienen intactas.
+
+## Modelo y migración
+
+- `Provider`: configuración pública validada por adaptador, tipo, prioridad, activación, ejecución manual, fechas, autor y secretos cifrados ocultos en consultas ordinarias. `syncMode=MANUAL` no implica el tipo MANUAL: todas las ejecuciones son solicitadas por operador.
+- `ProviderChannel`: identidad única `(providerId, externalId)`, enlace canónico, nombre/logo originales, metadata importada, actividad y última observación. No todos los proveedores tienen países, categorías o EPG.
+- `Channel`: conserva IDs, source/externalId legacy y todas las relaciones originales. `editorialOverrides` protege nombre, descripción, país, logo, website, categorías y desactivación editorial; las columnas existentes contienen la presentación efectiva, conservando consultas y filtros actuales.
+- `Stream`: agrega providerChannelId (de allí se obtiene providerId), priority, isPreferred e isDisabled. Conserva URL, feed, calidad, formato, referrer/userAgent, labels y verificación. Unicidad por `(providerChannelId, identityKey)` permite señales idénticas de distintos proveedores. No se implementa failover.
+- `ProviderSyncRun`: resultado, trigger, actor, fechas, duración y contadores diferenciados. Solo códigos controlados de error; nunca mensajes de upstream, URLs ni secretos.
+
+`MultiProvider1791300000000` crea IPTV-org y Manual, enlaza cada canal IPTV-org sin recrearlo, asigna procedencia a streams y después sustituye la restricción histórica. Registros legacy de otras fuentes se adoptan como relaciones MANUAL con externalId `legacy:<channelId>` y conservan sus source/externalId. No modifica publicaciones, grants, colecciones, categorías ni auditoría. Campos antiguos se mantienen para compatibilidad; retirarlos exige una fase futura y migración independiente.
+
+La migración usa MEDIUMTEXT para uploadEncrypted (hasta 5 MiB de playlist producen más de 5 MiB en base64); el metadato de entidad es TEXT para compatibilidad con SQL.js. El DDL versionado es autoritativo: no aplicar una migración generada que reduzca ese campo a TEXT. Producción nunca usa synchronize. Rollback automático se rechaza explícitamente: varias fuentes pueden colisionar bajo la constraint antigua y revertirla destruiría datos. Restaurar respaldo verificado con aplicación detenida si se requiere regresar a fase 2. MariaDB ejecuta commits implícitos en DDL: validar en copia antes del servidor y no reintentar ciegamente una migración parcialmente aplicada.
+
+## Adaptadores e identidad
+
+`ProviderAdapter` define tipos, capacidades, validación, obtención de catálogo normalizado y conectividad. `AdapterRegistry` selecciona adaptadores; el motor recibe una función de obtención y no exige recursos de IPTV-org. `ProviderSnapshot` queda como alias legacy de `IptvOrgSnapshot`, exclusivamente para el cliente/normalizador original.
+
+IPTV_ORG está funcional con los seis recursos oficiales y filtros originales. M3U_URL y M3U_UPLOAD están funcionales con fixtures y transporte HTTP simulado. MANUAL se administra por CRUD, sin reconciliación externa. XTREAM y REST_API aceptan configuración baseUrl y credenciales separadas pero muestran `syncSupported=false`; sync se rechaza y test responde 501. Sus contratos de upstream y reproducción segura están pendientes de proveedor autorizado verificable. No se construyen URLs Xtream con contraseñas ni se finge conectividad funcional.
+
+No se fusionan nombres ni tvg-id entre proveedores automáticamente. Un tvg-id es identidad dentro de su proveedor; sin él se utiliza hash de URL. Señales con identidad incierta crean un canal DRAFT independiente. La vinculación administrativa persistida se conserva en posteriores sincronizaciones. Reasignar ProviderChannel mueve sus streams en transacción y deja el canal original y sus relaciones históricas intactos; las publicaciones, colecciones y grants NO se trasladan al destino. El operador revisa esas decisiones por separado.
 
 ## Sincronización
 
-1. Obtiene los seis catálogos oficiales, sin descargar video ni logos.
-2. Valida la blocklist completa: una entrada inválida cancela la operación. Rechaza catálogos esenciales vacíos. Un canal cuyo `is_nsfw` no sea explícitamente `false` se excluye.
-3. Adquiere `GET_LOCK` por conexión para evitar dos escritores IPTV-org en MariaDB. El lock se libera incluso ante errores; SQL.js omite únicamente ese lock en pruebas.
-4. Deshabilita canales ya almacenados que ahora estén bloqueados/NSFW. Actualiza países y categorías por lotes.
-5. Cada lote de canales es transaccional: actualiza metadatos, reconcilia relaciones de categorías mediante `isCurrent`, conservando las retiradas y reconcilia streams. Conserva ID y verificación de streams cuya URL/feed no cambiaron.
-6. Un lote fallido se revierte, se cuenta como error y se continúa; el CLI sale con código 1. Los lotes anteriores permanecen confirmados y el siguiente intento converge.
-7. Solo cuando todos los lotes terminan correctamente, desactiva canales desaparecidos de esa fuente y marca sus streams no disponibles. Otros proveedores quedan fuera de esta operación.
+1. Reserva exclusión local y `GET_LOCK('hmo_iptv_provider_sync_<id>',0)` con una conexión dedicada antes de descargar. Un conflicto produce 409. Los locks de proveedores distintos son independientes.
+2. Relee configuración/actividad bajo el lock. Marca ejecuciones RUNNING abandonadas como CANCELLED al siguiente intento cuando ya posee el lock. Persiste ejecución y auditoría. HTTP retorna 202 con ID; el trabajo continúa mediante setImmediate.
+3. Descarga/normaliza antes de escribir catálogo. IPTV-org mantiene límites/retries y validación fail-closed de blocklist. Un fallo de descarga nunca se trata como catálogo vacío.
+4. Actualiza países/categorías y lotes transaccionales. En MariaDB usa READ COMMITTED y bloquea la fila canónica al actualizarla. Conserva identidades, verificaciones, prioridades y desactivaciones manuales; canales nuevos quedan DRAFT. Las alternativas de otras fuentes quedan fuera de la reconciliación.
+5. Solo el propietario original de metadata del canal actualiza su presentación; fuentes enlazadas conservan metadata original en ProviderChannel. Aplica overrides editoriales antes de guardar; categorías manuales sustituyen la clasificación importada. No modifica publicaciones, colecciones, ALLOW o DENY.
+6. Un lote fallido se revierte y se reporta PARTIAL; no retira fuentes ausentes si hubo errores. El siguiente intento converge. Fallos generales producen FAILED. Historial diferencia streamsCreated/Updated y found/created/updated/discarded/disabled/errors.
+7. Una fuente ausente/inactiva pasa a ProviderChannel.isActive=false y sus streams a isAvailable=false. La actividad canónica depende de fuentes activas de proveedores activos y respeta la desactivación editorial. La ausencia de una fuente no elimina canales ni alternativas de otra.
+8. Persiste fechas/resultado y libera la conexión y lock incluso ante errores. El CLI conserva su formato estadístico y código de salida 1 cuando hay errores.
 
-La idempotencia se refiere a identidades y relaciones: una segunda ejecución no crea duplicados. `lastSyncedAt` y `updatedAt` sí cambian. El sincronizador no interpreta errores de conectividad como un catálogo vacío. No hay sincronización automática ni endpoint administrativo público.
+Cambios de configuración, upload, vinculación y streams usan el mismo lock por proveedor, evitando carreras con sync. Edición editorial bloquea la fila del canal. Desactivar un proveedor retira disponibilidad de sus streams y recalcula canales, sin borrar relaciones/historial. Reactivarlo requiere una sincronización para recuperar disponibilidad. MANUAL reservado permanece activo y sin sync.
 
-## Seguridad y límites reales
+La ejecución HTTP no es durable ante reinicios: los lotes ya confirmados permanecen, el lock se libera con la conexión y el RUNNING abandonado se cancela en la siguiente reserva. No se implementa cola, scheduler ni endpoint cancel; PENDING/CANCELLED están preparados en el modelo. Reiniciar durante trabajo exige repetir sync. Una futura cola/worker puede llamar al mismo motor. Descargas simultáneas de distintos proveedores están verificadas en SQL.js; concurrencia de escrituras y GET_LOCK requieren MariaDB real.
 
-Las solicitudes salientes solo se permiten al host oficial por HTTPS. Un lookup DNS verifica que la dirección elegida sea pública y la misma resolución se utiliza para conectar. Se rechazan redirecciones, proxies de entorno y respuestas superiores a 64 MiB por recurso. Las URLs de metadatos y streams se validan sintácticamente y rechazan IP privadas/reservadas y credenciales incrustadas; **no se consultan sus hosts**. Un DNS de un stream puede cambiar: un verificador/proxy futuro necesitará la misma política de resolución y conexión antes de hacer solicitudes.
+## M3U, secretos y HTTP saliente
 
-Helmet, CORS con lista explícita, validación DTO, excepciones sin detalles internos y throttling están implementados. CORS limita el acceso de navegadores; no constituye autenticación. Rate limiting usa memoria por proceso y dirección de conexión. No se confía automáticamente en `X-Forwarded-For`; antes de desplegar detrás de un proxy deben configurarse proxies de confianza concretos. Varias réplicas necesitarán almacenamiento compartido de límites.
+Playlists autorizadas UTF-8 (BOM opcional), hasta 5 MiB y 10000 entradas, reconocen tvg-id/name/logo, group-title y EXTINF. Rechazan formatos inválidos, URLs no públicas, encoding inválido, manifiestos HLS de segmentos y directivas de headers/reproducción no soportadas. No se descargan videos ni logos. Los grupos crean categorías por hash; no se exige país ni blocklist ficticia. M3U no tiene clasificación NSFW confiable: requiere revisión editorial y nunca se publica automáticamente.
 
-La base exige credenciales configuradas, nombre fijo y esquema manual. El usuario de la API debería tener SELECT/INSERT/UPDATE/DELETE en esta base; una cuenta controlada temporalmente puede aplicar DDL para migraciones. No se asignan privilegios desde este repositorio. Los errores HTTP no devuelven consultas, stacks, tokens ni conexiones. Los logs SQL con parámetros están desactivados incluso con `DB_LOGGING=true`; esa opción habilita solo logs de esquema/migración.
+Upload usa `POST /admin/providers/:id/upload` con JSON `{content: <texto del archivo>}` y request máximo 6 MiB. No es multipart; se recibe el contenido UTF-8 del archivo, se valida y cifra dentro de MariaDB, sin archivos persistidos en el repositorio. Credenciales tienen límite JSON 32 KiB.
 
-No hay verificación de disponibilidad de video: los streams nuevos son `UNKNOWN`, con `lastCheckedAt=null`. Las extensiones permiten inferir HLS/DASH/MP4/MPEG-TS, pero no confirman codecs, soporte del navegador ni disponibilidad. `labels` preserva avisos como geobloqueo; los headers sugeridos no evaden restricciones y algunos requieren soporte nativo del cliente. La API no retransmite ni hace proxy.
+`PROVIDER_CREDENTIALS_KEY` es obligatoria y validada antes de conectar: base64 canónico de exactamente 32 bytes. AES-256-GCM usa nonce aleatorio por escritura y AAD con propósito/ID de proveedor; copiar un cifrado entre registros no permite descifrarlo. Credenciales y uploads son select:false y las respuestas eliminan explícitamente ambos campos. DTO de credenciales/upload es writeOnly sin ejemplos; auditoría solo registra IDs y estados. Guardar la clave fuera del repositorio y conservarla con los respaldos cifrados; reemplazarla sin recifrar hará ilegibles las credenciales/playlists. Rotación automatizada pendiente.
+
+M3U_URL permite un token Bearer cifrado; no acepta credenciales incrustadas en URL. Config pública solo acepta url; API pendiente solo baseUrl. URL saliente HTTPS, sin userinfo, fragmento ni parámetros identificables como secretos; control DNS en el lookup del agente para todas las direcciones retornadas, utilizado por la misma conexión. IP privadas/reservadas se rechazan, redirects=0, proxy=false, timeout=15s, máximo 5 MiB de respuesta descomprimida y tres intentos. IPTV-org mantiene host oficial, máximo 64 MiB/recurso y retries configurables. Su test de conectividad usa un recurso y timeout 5s sin retries; M3U test descarga/valida la playlist sin escribir catálogo.
+
+URLs de streams/logos/website no se consultan. Los streams nuevos M3U/manual rechazan nombres de query que sugieran secretos; URLs arbitrarias no permiten detectar todos los formatos de credenciales opacas. Deben proporcionar enlaces públicos de reproducción sin secretos. Xtream autenticado permanece pendiente hasta resolver entrega segura sin exponer credenciales, sin proxy/restreaming en esta fase. UNKNOWN no acredita disponibilidad ni reproducción.
+
+## Administración y permisos
+
+Todas las nuevas rutas exigen ADMIN/SUPER_ADMIN, JWT y permisos explícitos. SUPER_ADMIN conserva política global sin asignaciones; USER no administra aun con permiso accidental. ADMIN solo opera con rol y permisos concedidos. Vincular fuentes exige providers.manage, channels.manage y streams.manage. Lecturas reutilizan providers.read, sync.history, channels.read y streams.read. Sync exige sync.execute; CRUD usa providers.manage/channels.manage/streams.manage. No hay permisos nuevos ni cambios del seed.
+
+CRUD manual crea fuentes del proveedor reservado, canales DRAFT, categorías existentes y streams públicos con prioridad/preferencia. DELETE es lógico: Channel.isActive=false protegido como override o Stream.isDisabled=true. Metadata importada de streams solo admite cambios de priority/isPreferred/isDisabled; editar URL, nombre, formato o calidad de señales importadas devuelve 400. El operador puede añadir una señal independiente MANUAL.
+
+Eventos provider.create/update/enable/disable/test/sync/credentials.update, provider-channel.link, channel.create/update y stream.create/update/disable reutilizan AuditService. Los cambios y sus auditorías se confirman en la misma transacción administrativa. Requests fallidas usan interceptor existente sanitizado. No se almacenan payloads, excepciones upstream ni secretos en historial/auditoría.
 
 ## Seguridad de fase 2
 
@@ -77,4 +102,4 @@ No se modificaron migraciones históricas ni datos persistidos. SecuritySeed reg
 
 La validación automática usa HTTP real con NestJS, guards y persistencia TypeORM en SQL.js aislado, incluyendo sincronización con fixtures. El SQL de autorización se ejecuta en esas pruebas; los metadatos MariaDB y las sentencias de migración se verifican sin conexión. Esto no sustituye una ejecución posterior de integración en MariaDB autorizado para confirmar comportamiento del driver, bloqueos y concurrencia.
 
-Los módulos existentes cubren cuentas/RBAC, sesiones, auditoría, catálogo, streams, publicaciones, colecciones y sincronización por CLI. Proveedores administrativos, sincronización HTTP, configuración HTTP, EPG, VOD y frontend no se implementan en esta fase. Los permisos reservados no equivalen a endpoints existentes.
+La fase 3 agrega administración de proveedores, sincronización HTTP y edición manual del catálogo usando la misma política. EPG, VOD, configuración HTTP y frontend siguen fuera del alcance.

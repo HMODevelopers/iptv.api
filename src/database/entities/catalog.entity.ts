@@ -1,3 +1,4 @@
+import { ProviderChannel } from './provider.entity';
 import { ApiProperty } from '@nestjs/swagger';
 import { Check, Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, OneToMany, PrimaryColumn, PrimaryGeneratedColumn, Unique, UpdateDateColumn } from 'typeorm';
 
@@ -24,6 +25,7 @@ export class Category {
 @Unique('uq_channels_source_external', ['source', 'externalId'])
 @Index('idx_channels_country_active', ['countryCode', 'isActive'])
 export class Channel {
+  @Column({ type: 'simple-json', nullable: true }) editorialOverrides!: Record<string, unknown> | null;
   @ApiProperty() @PrimaryGeneratedColumn() id!: number;
   @ApiProperty() @Column({ type: 'varchar', length: 255 }) externalId!: string;
   @ApiProperty() @Index('idx_channels_name') @Column({ type: 'varchar', length: 255 }) name!: string;
@@ -53,10 +55,15 @@ export class ChannelCategory {
 
 export enum StreamStatus { UNKNOWN = 'UNKNOWN', ONLINE = 'ONLINE', OFFLINE = 'OFFLINE' }
 @Entity('streams')
-@Unique('uq_stream_channel_key', ['channelId','identityKey'])
+@Unique('uq_stream_source_key', ['providerChannelId','identityKey'])
 @Index('idx_stream_channel_status', ['channelId','status'])
 @Check('chk_stream_status', "`status` IN ('UNKNOWN','ONLINE','OFFLINE')")
 export class Stream {
+  @ApiProperty({ nullable: true }) @Column({ type: 'int', nullable: true }) providerChannelId!: number | null;
+  @ManyToOne(() => ProviderChannel, { onDelete: 'RESTRICT' }) @JoinColumn({ name: 'providerChannelId' }) providerChannel!: ProviderChannel | null;
+  @ApiProperty() @Column({ type: 'int', default: 0 }) priority!: number;
+  @ApiProperty() @Column({ default: false }) isPreferred!: boolean;
+  @Column({ default: false }) isDisabled!: boolean;
   @ApiProperty() @PrimaryGeneratedColumn() id!: number;
   @ApiProperty() @Column({ type: 'int' }) channelId!: number;
   @ManyToOne(() => Channel, channel => channel.streams, { onDelete: 'CASCADE' }) @JoinColumn({ name: 'channelId', foreignKeyConstraintName: 'fk_stream_channel' }) channel!: Channel;

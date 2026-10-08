@@ -7,7 +7,7 @@ import { IptvOrgClient } from '../src/providers/iptv-org/iptv-org.client';
 import { Environment, validateEnvironment } from '../src/config/environment';
 function createClient(retries = 0) {
   const http = { get: jest.fn() };
-  const env = validateEnvironment({ ...parse(readFileSync('.env.example')), IPTV_ORG_MAX_RETRIES: String(retries) });
+  const env = validateEnvironment({ ...{ ...parse(readFileSync('.env.example')), PROVIDER_CREDENTIALS_KEY: Buffer.alloc(32,7).toString('base64') }, IPTV_ORG_MAX_RETRIES: String(retries) });
   const client = new IptvOrgClient(http as unknown as HttpService, new ConfigService(env) as ConfigService<Environment,true>);
   return { client, http };
 }

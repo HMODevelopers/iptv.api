@@ -1,6 +1,8 @@
+import { credentialsKey } from './credentials-key';
 import { LogLevel } from '@nestjs/common';
 
 export interface Environment {
+  PROVIDER_CREDENTIALS_KEY: string;
   NODE_ENV: string; APP_NAME: string; APP_HOST: string; PORT: number;
   API_PREFIX: string; API_VERSION: string; LOG_LEVEL: LogLevel;
   DB_TYPE: 'mariadb'; DB_HOST: string; DB_PORT: number; DB_USERNAME: string;
@@ -22,6 +24,7 @@ export function validateEnvironment(input: Record<string, unknown>): Environment
     result[key] = value;
     return value;
   };
+  credentialsKey(required('PROVIDER_CREDENTIALS_KEY'));
   const integer = (key: string, min: number, max: number) => {
     const value = required(key);
     if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw new Error(`Número inválido: ${key}`);

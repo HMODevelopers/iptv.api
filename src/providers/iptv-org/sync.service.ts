@@ -1,129 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DataSource, In } from 'typeorm';
-import { Category, ChannelPublication, Channel, ChannelCategory, Country, Stream, StreamStatus } from '../../database/entities';
+import { DataSource } from 'typeorm';
+import { ProviderType } from '../../database/entities';
 import { Environment } from '../../config/environment';
+import { AuditService } from '../../security/audit.service';
 import { IptvOrgClient } from './iptv-org.client';
 import { normalizeSnapshot } from './normalizer';
-
-export interface SyncStatistics {
-  processed: number; created: number; updated: number; streams: number;
-  errors: number; discarded: number; durationMs: number;
-}
+import { ensureReservedProvider, ProviderSyncEngine } from '../sync-engine';
+export { SyncStatistics } from '../sync-engine';
+/** Compatibility facade: CLI and HTTP share a single persistence/reconciliation engine. */
 @Injectable()
 export class IptvOrgSyncService {
-  private readonly logger = new Logger(IptvOrgSyncService.name);
-  constructor(private readonly dataSource: DataSource, private readonly client: IptvOrgClient,
-    private readonly config: ConfigService<Environment, true>) {}
-
-  async sync(): Promise<SyncStatistics> {
-    const start = Date.now();
-    const stats: SyncStatistics = { processed: 0, created: 0, updated: 0, streams: 0, errors: 0, discarded: 0, durationMs: 0 };
-    // HTTP and normalization complete before any write or DB transaction.
-    let snapshot: ReturnType<typeof normalizeSnapshot>;
-    try { snapshot = normalizeSnapshot(await this.client.fetchSnapshot()); }
-    catch (error) {
-      stats.errors = 1; stats.durationMs = Date.now() - start;
-      this.logger.log(JSON.stringify(stats));
-      throw error;
-    }
-    stats.discarded = snapshot.discarded;
-    const batchSize = this.config.get('IPTV_SYNC_BATCH_SIZE', { infer: true });
-    const source = this.client.source;
-    const syncedAt = new Date();
-    const runner = this.dataSource.createQueryRunner();
-    let locked = false;
-    try {
-      await runner.connect();
-      if (this.dataSource.options.type === 'mariadb') {
-        const rows: { acquired: number }[] = await runner.query("SELECT GET_LOCK('hmodevelopers_iptv:sync:iptv-org', 0) AS acquired");
-        if (Number(rows[0]?.acquired) !== 1) throw new Error('Otra sincronización está en curso');
-        locked = true;
-      }
-      const batch = async <T>(items: T[], write: (chunk: T[]) => Promise<void>) => {
-        for (let offset = 0; offset < items.length; offset += batchSize) {
-          await runner.startTransaction();
-          try { await write(items.slice(offset,offset + batchSize)); await runner.commitTransaction(); }
-          catch (error) { await runner.rollbackTransaction(); throw error; }
-        }
-      };
-      // Preserve editorial decisions and grants; blocked/NSFW channels become unavailable.
-      await batch([...snapshot.excludedIds], async ids => {
-        await runner.manager.update(Channel, { source, externalId: In(ids) }, { isActive: false });
-      });
-      await batch(snapshot.countries, async items => {
-        const repo = runner.manager.getRepository(Country);
-        for (const item of items) await repo.save(item);
-      });
-      await batch(snapshot.categories, async items => {
-        const repo = runner.manager.getRepository(Category);
-        for (const item of items) {
-          const previous = await repo.findOneBy({ slug: item.slug });
-          await repo.save(repo.create({ ...previous, ...item }));
-        }
-      });
-      const categories = new Map((await runner.manager.find(Category)).map(item => [item.slug,item.id]));
-      for (let offset = 0; offset < snapshot.channels.length; offset += batchSize) {
-        const chunk = snapshot.channels.slice(offset,offset + batchSize);
-        const counts = { created: 0, updated: 0, streams: 0 };
-        await runner.startTransaction();
-        try {
-          for (const item of chunk) {
-            const { categorySlugs, ...fields } = item;
-            const repo = runner.manager.getRepository(Channel);
-            const previous = await repo.findOneBy({ source, externalId: item.externalId });
-            const channel = await repo.save(repo.create({ ...previous, ...fields, source, lastSyncedAt: syncedAt }));
-            if (previous) counts.updated++; else {
-              counts.created++;
-              await runner.manager.save(ChannelPublication,{ channelId: channel.id, status: 'DRAFT' });
-            }
-            await runner.manager.update(ChannelCategory, { channelId: channel.id }, { isCurrent: false });
-            for (const slug of categorySlugs) {
-              await runner.manager.save(ChannelCategory, { channelId: channel.id, categoryId: categories.get(slug)!, isCurrent: true });
-            }
-            const streamRepo = runner.manager.getRepository(Stream);
-            const existing = await streamRepo.createQueryBuilder('s').addSelect('s.identityKey').where('s.channelId = :id', { id: channel.id }).getMany();
-            const old = new Map(existing.map(stream => [stream.identityKey,stream]));
-            const retained = new Set<string>();
-            for (const stream of snapshot.streams.get(item.externalId) ?? []) {
-              retained.add(stream.identityKey);
-              const prior = old.get(stream.identityKey);
-              await streamRepo.save(streamRepo.create({ ...prior, ...stream, channelId: channel.id, isAvailable: true,
-                status: prior?.status ?? StreamStatus.UNKNOWN, lastCheckedAt: prior?.lastCheckedAt ?? null }));
-              counts.streams++;
-            }
-            const removed = existing.filter(stream => !retained.has(stream.identityKey)).map(stream => stream.id);
-            if (removed.length) await streamRepo.update({ id: In(removed) },{ isAvailable: false });
-          }
-          await runner.commitTransaction();
-          stats.created += counts.created; stats.updated += counts.updated; stats.streams += counts.streams;
-          stats.processed += chunk.length;
-        } catch {
-          await runner.rollbackTransaction(); stats.errors++;
-          this.logger.error(`Lote ${Math.floor(offset / batchSize) + 1} revertido; no se registran datos sensibles`);
-        }
-      }
-      // Reconcile disappeared records only after all batches have committed successfully.
-      if (!stats.errors) {
-        const stale = await runner.manager.getRepository(Channel).createQueryBuilder('c')
-          .where('c.source = :source', { source })
-          .andWhere('(c.lastSyncedAt IS NULL OR c.lastSyncedAt < :at)', { at: syncedAt }).getMany();
-        await batch(stale, async items => {
-          const ids = items.map(channel => channel.id);
-          await runner.manager.update(Stream, { channelId: In(ids) }, { isAvailable: false });
-          await runner.manager.update(Channel, { id: In(ids) }, { isActive: false });
-        });
-      }
-    } catch (error) {
-      stats.errors++; stats.durationMs = Date.now() - start;
-      this.logger.log(JSON.stringify(stats));
-      throw error;
-    } finally {
-      try { if (locked) await runner.query("SELECT RELEASE_LOCK('hmodevelopers_iptv:sync:iptv-org')"); }
-      finally { await runner.release(); }
-    }
-    stats.durationMs = Date.now() - start;
-    this.logger.log(JSON.stringify(stats));
-    return stats;
+  constructor(private readonly db: DataSource, private readonly client: IptvOrgClient, private readonly config: ConfigService<Environment,true>) {}
+  async sync() {
+    const provider = await ensureReservedProvider(this.db,ProviderType.IPTV_ORG);
+    const engine = new ProviderSyncEngine(this.db,this.config,new AuditService(this.db));
+    return engine.sync(provider,async () => normalizeSnapshot(await this.client.fetchSnapshot()));
   }
 }

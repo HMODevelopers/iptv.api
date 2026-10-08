@@ -14,6 +14,7 @@ Permite consultar canales internacionales o mexicanos, explorar categorías y pa
 
 ## Funcionalidades actuales
 
+- Administración multiproveedor: IPTV-org, M3U_URL, M3U_UPLOAD y fuentes manuales, con historial y procedencia de streams.
 - Integración con los seis recursos oficiales de [IPTV-org](https://github.com/iptv-org/api): canales, streams, logos, categorías, países y blocklist.
 - Catálogo internacional persistido; México se selecciona mediante `country=MX`.
 - Exclusión NSFW/DMCA y deshabilitación de canales previamente importados que pasan a estar bloqueados, conservando su historial.
@@ -27,13 +28,13 @@ Los streams nuevos tienen estado `UNKNOWN`: no se comprueba su disponibilidad en
 
 ## Funcionalidades futuras
 
-Se prevé incorporar múltiples proveedores, listas M3U y proveedores compatibles con Xtream API; EPG, favoritos e historial; panel administrativo Next.js y reproducción web; verificación de calidad/disponibilidad, monitoreo de fuentes y estadísticas de uso; clientes móviles y para televisores inteligentes. Estas funcionalidades todavía no están implementadas.
+Xtream/REST tienen contratos preparados, sin soporte operativo verificado. Se prevé incorporar sus integraciones autorizadas; EPG, favoritos e historial; panel administrativo Next.js y reproducción web; verificación de calidad/disponibilidad, monitoreo de fuentes y estadísticas de uso; clientes móviles y para televisores inteligentes. Estas funcionalidades todavía no están implementadas.
 
 ## Arquitectura
 
 **Fuentes IPTV → Integración → Normalización → Base de datos → API REST → Aplicaciones cliente.**
 
-El contrato `CatalogProvider` admite nuevos adaptadores. La identidad de un canal incluye su fuente para evitar conflictos entre proveedores. Las consultas usan TypeORM sobre MariaDB; el proveedor externo interviene únicamente en la sincronización CLI.
+`ProviderAdapter` retorna un catálogo normalizado neutral; `AdapterRegistry` selecciona por tipo. `ProviderChannel` enlaza identidades externas con canales canónicos y conserva procedencia de streams. El mismo motor atiende CLI y sincronizaciones administrativas HTTP. Importar siempre conserva decisiones editoriales y crea DRAFT.
 
 El backend utiliza NestJS y TypeScript, TypeORM, MariaDB 10.11 y mysql2. La explicación del modelo, estrategia transaccional y límites de seguridad está en [docs/architecture.md](docs/architecture.md).
 
@@ -46,10 +47,10 @@ src/
   config/         Validación de entorno y configuración Nest/TypeORM
   database/
     entities/     Catálogo, cuentas, RBAC, sesiones, auditoría y acceso a contenido
-    migrations/   InitialCatalog, SecuritySchema y SecuritySeed
+    migrations/   InitialCatalog, SecuritySchema, SecuritySeed y MultiProvider
     data-source.ts
   providers/
-    provider.ts   Contrato extensible
+    provider.ts   Alias legacy y contrato neutral de adaptadores
     iptv-org/     Cliente HTTP, normalización y sincronización
   security/       Autenticación, RBAC, administración y auditoría
   channel-access/ Autorización de contenido y guard reutilizable
@@ -61,7 +62,7 @@ docs/             Arquitectura y decisiones
 
 ## Seguridad
 
-Actualmente se aplican Helmet, CORS configurable con orígenes explícitos, límites de solicitudes, validación global de DTOs, consultas parametrizadas, paginación máxima de 100 y errores HTTP consistentes sin detalles internos. La integración usa HTTPS, timeouts, reintentos acotados, verificación DNS de direcciones públicas, un único host autorizado y ninguna redirección. No se hacen solicitudes a URLs de reproducción o logos.
+Actualmente se aplican Helmet, CORS configurable con orígenes explícitos, límites de solicitudes, validación global de DTOs, consultas parametrizadas, paginación máxima de 100 y errores HTTP consistentes sin detalles internos. La integración usa HTTPS, timeouts, reintentos acotados, verificación DNS de direcciones públicas, host oficial para IPTV-org, hosts públicos configurados para M3U y ninguna redirección. No se hacen solicitudes a URLs de reproducción o logos.
 
 Las credenciales se configuran en `.env`, excluido de Git y del contexto Docker. No se registran errores Axios completos ni parámetros SQL. `synchronize` y `migrationsRun` están desactivados obligatoriamente; el nombre de la base se valida como `hmodevelopers_iptv`. No se crea otra base ni otro contenedor MariaDB. `DB_SSL=true` exige validación de certificado; el servidor debe tener un certificado reconocido por el runtime.
 
@@ -83,13 +84,13 @@ Requisitos: Ubuntu, Node.js 22 LTS, npm y conectividad autorizada a MariaDB 10.1
 npm install
 ```
 
-El repositorio incluye `.env.example`; esta implementación también creó físicamente `.env`. En un clon nuevo, crea tu configuración con `cp .env.example .env`. Si tienes un `.env` existente, conserva sus valores y agrega únicamente variables faltantes.
+El repositorio incluye `.env.example`. En un clon nuevo, crea tu configuración con `cp .env.example .env`. Si tienes un `.env` existente, conserva sus valores y agrega únicamente variables faltantes.
 
 Configura las credenciales de MariaDB y completa `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` con dos secretos aleatorios diferentes de al menos 48 caracteres. La API rechaza valores ausentes, cortos, repetitivos o marcadores; no se generaron secretos reales. Edita manualmente `DB_USERNAME` y `DB_PASSWORD` si aún contienen marcadores. Se mantienen como marcadores `COLOCAR_USUARIO` y `COLOCAR_PASSWORD`; la API y el sincronizador fallan antes de realizar conexiones mientras permanezcan así. No compartas ni versiones ese archivo.
 
 ### Variables de entorno
 
-Todas las variables usadas están presentes en ambos archivos. Los booleanos aceptan solamente `true` o `false`.
+Las variables están documentadas en `.env.example`; agrega `PROVIDER_CREDENTIALS_KEY` a tu `.env` existente. Los booleanos aceptan solamente `true` o `false`.
 
 | Variable | Valor inicial | Uso |
 | --- | --- | --- |
@@ -125,6 +126,7 @@ Todas las variables usadas están presentes en ambos archivos. Los booleanos ace
 | `RATE_LIMIT_MAX` | `100` | Solicitudes por ventana |
 | `DOCKER_HOST_PORT` | `3003` | Puerto publicado; verificar antes de desplegar |
 | `DOCKER_DB_NETWORK` | `COLOCAR_RED_DOCKER` | Nombre pendiente de la red existente de `rc_mysql` |
+| `PROVIDER_CREDENTIALS_KEY` | Marcador pendiente | Clave privada base64 de 32 bytes; cifrado de credenciales y uploads |
 | `JWT_ACCESS_SECRET` | Marcador pendiente | Secreto aleatorio privado, mínimo 48 caracteres |
 | `JWT_REFRESH_SECRET` | Marcador pendiente | Otro secreto aleatorio independiente |
 | `JWT_ACCESS_TTL_SECONDS` | `900` | Duración access, 60–3600 segundos |
@@ -243,7 +245,7 @@ Las pruebas unitarias cubren normalización, nulos, deduplicación, exclusiones,
 
 La sincronización automática del esquema existe **solo en bases efímeras de pruebas**. Producción y CLI la rechazan. Las pruebas de fase 2 cubren login, bloqueo, expiración JWT, refresh/rotación/reutilización, sesiones, cambio obligatorio de contraseña, RBAC, protección del último administrador, bootstrap, publicaciones, colecciones, grants, IDOR, streams, paginación y conservación editorial durante sincronización. Los metadatos del driver MariaDB se validan sin conexión.
 
-**Validación ejecutada:** `npm run lint` y `npm run build` correctos; `npm run test`: **91 pruebas aprobadas en 7 suites**. Los mensajes de rollback/errores sanitizados de la suite corresponden a escenarios negativos intencionales.
+**Validación de fase 3:** consultar [informe de implementación](docs/phase3-report.md) para los resultados exactos de lint, build y ambas suites. Los mensajes de rollback/errores sanitizados de la suite corresponden a escenarios negativos intencionales.
 
 Las pruebas SQL.js no validan los bloqueos concurrentes ni el DDL de MariaDB. Antes del uso operativo, aplicar y comprobar las migraciones en una copia autorizada de MariaDB 10.11 y comprobar refresh simultáneos y bootstrap simultáneo; después aplicar al servidor con respaldo y revisión. Esta implementación no ejecutó migraciones, bootstrap ni despliegues contra el servidor externo.
 
@@ -266,7 +268,7 @@ Solo SUPER_ADMIN cambia roles de cuentas y permisos de roles. Ningún usuario pu
 | Auditoría | `GET /api/admin/audit`; permiso `audit.read` |
 | Cliente | `GET /api/me/channels`, `/channels/:id`, `/channels/:id/streams`, `/collections`, `/profile`; siempre usa al usuario autenticado |
 
-El seed registra: `users.read/create/update/disable`, `roles.read/create/update/delete`, `permissions.read/assign`, `channels.read/manage/publish/hide`, `streams.read/manage`, `collections.read/create/update/delete/assign`, `providers.read/manage`, `sync.execute/history`, `sessions.read/revoke`, `audit.read`, `settings.manage`. Los códigos de proveedores/configuración y sincronización reservan autorización para la evolución; no implican que exista administración HTTP de proveedores o un endpoint de sincronización. La sincronización sigue siendo un comando operativo local.
+El seed registra: `users.read/create/update/disable`, `roles.read/create/update/delete`, `permissions.read/assign`, `channels.read/manage/publish/hide`, `streams.read/manage`, `collections.read/create/update/delete/assign`, `providers.read/manage`, `sync.execute/history`, `sessions.read/revoke`, `audit.read`, `settings.manage`. Los permisos providers.* y sync.* autorizan los endpoints administrativos de fase 3; settings.manage permanece reservado. La sincronización está disponible por CLI y HTTP controlado.
 
 Las listas de usuarios, colecciones y auditoría aceptan `page/limit`. Las rutas de reemplazo usan `{ "ids": [1,2] }`; las de canales individuales usan `{ "channels": [{ "channelId": 1, "accessType": "ALLOW" }] }`. Arrays vacíos revocan/quitan las relaciones correspondientes. Duplicados, IDs inexistentes y campos desconocidos se rechazan. Las operaciones sobre varias relaciones son transaccionales y auditadas.
 
@@ -301,7 +303,7 @@ Se ejecuta en una terminal interactiva; el mismo comando selecciona código Type
 
 ## Desarrollo futuro
 
-Panel administrativo Next.js, reproductor web IPTV, EPG, favoritos, administración de proveedores, estadísticas, dispositivos y sesiones avanzadas, tokens de reproducción para fuentes autorizadas, aplicaciones móviles y Smart TV. Ningún frontend, suscripción ni pago se implementó en esta fase.
+Panel administrativo Next.js, reproductor web IPTV, EPG, favoritos, adaptadores Xtream/REST verificados, estadísticas, dispositivos y sesiones avanzadas, tokens de reproducción para fuentes autorizadas, aplicaciones móviles y Smart TV. Ningún frontend, suscripción ni pago se implementó en esta fase.
 
 ## Consideraciones legales
 
@@ -321,6 +323,60 @@ Para SUPER_ADMIN y consultas administrativas autorizadas, la lista omite por def
 
 Consultar un registro, su visibilidad editorial, su disponibilidad y la autorización de reproducción son conceptos distintos. Los espectadores requieren canal activo, publicación PUBLISHED y ALLOW o colección activa no revocada, con DENY prioritario, aplicados en SQL antes de paginar. Solo reciben streams `isAvailable=true`. SUPER_ADMIN y ADMIN con `streams.read` en rutas administrativas pueden inspeccionar también streams retirados (`isAvailable=false`), sin cambiar su estado. Esto no comprueba reproducción, derechos de redistribución, estado ONLINE ni restricciones del proveedor. No se publican canales automáticamente.
 
-La migración histórica `SecuritySeed1791200000001` permanece intacta: registra roles reservados, permisos y relaciones del propietario mediante INSERT IGNORE; su rollback conserva asignaciones. `seedSecurity` es idempotente y no crea usuarios. `bootstrapSuperAdmin` crea únicamente el primer propietario y rechaza ejecuciones posteriores, sin reemplazar ni elevar cuentas existentes. No fue necesaria una nueva migración en esta fase. Los nuevos permisos persistidos deben incorporarse mediante migraciones versionadas idempotentes que agreguen sus relaciones con SUPER_ADMIN para consistencia administrativa; `requirePermission` ya los reconoce para el propietario sin depender de esas relaciones.
+La migración histórica `SecuritySeed1791200000001` permanece intacta: registra roles reservados, permisos y relaciones del propietario mediante INSERT IGNORE; su rollback conserva asignaciones. `seedSecurity` es idempotente y no crea usuarios. `bootstrapSuperAdmin` crea únicamente el primer propietario y rechaza ejecuciones posteriores, sin reemplazar ni elevar cuentas existentes. En fase 2.1 no fue necesaria una migración nueva; fase 3 incorpora MultiProvider. Los nuevos permisos persistidos deben incorporarse mediante migraciones versionadas idempotentes que agreguen sus relaciones con SUPER_ADMIN para consistencia administrativa; `requirePermission` ya los reconoce para el propietario sin depender de esas relaciones.
 
-Los futuros módulos deben utilizar esta política, los guards y restricciones SQL, sin aceptar privilegios del cliente ni excepciones a autenticación. Existen catálogo, streams, publicaciones, colecciones, cuentas, sesiones, auditoría y sincronización IPTV-org mediante CLI. Los permisos `providers.*`, `sync.*` y `settings.manage` reservan funcionalidades; no implican que existan endpoints administrativos de proveedores, sincronización o configuración. EPG, VOD, frontend y autorización/verificación adicional de reproducción siguen fuera de esta fase.
+Los futuros módulos deben utilizar esta política, los guards y restricciones SQL, sin aceptar privilegios del cliente ni excepciones a autenticación. Existen catálogo, streams, publicaciones, colecciones, cuentas, sesiones, auditoría y sincronización IPTV-org mediante CLI. La fase 3 implementa providers.* y sync.* mediante endpoints administrativos; settings.manage sigue reservado. EPG, VOD, frontend y autorización/verificación adicional de reproducción siguen fuera de esta fase.
+
+
+## Fase 3: proveedores y catálogo administrable
+
+La migración nueva conserva IDs, publicaciones, colecciones, grants, streams y categorías. Crea los proveedores reservados `iptv-org` y `manual` y realiza backfill de procedencia. No se ejecutó contra la MariaDB externa. El informe completo y el procedimiento operativo están en [docs/phase3-report.md](docs/phase3-report.md).
+
+Antes de iniciar API, CLI o migraciones, agrega una clave privada a tu `.env` existente. Genera **manualmente** 32 bytes seguros:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+```
+
+Copia el resultado como `PROVIDER_CREDENTIALS_KEY` y guárdalo fuera de Git junto con un respaldo seguro. No reemplaces los secretos JWT ni otras variables existentes. No se generó ni escribió una clave real durante esta implementación. Cambiar la clave sin recifrar deja ilegibles las credenciales y uploads almacenados. Credenciales se escriben en `credentials`, nunca en `config`; se cifran con AES-256-GCM y no aparecen en GET/auditoría/historial.
+
+Todas las rutas siguientes llevan prefijo `/api`, Bearer JWT y rol ADMIN/SUPER_ADMIN; ADMIN requiere además permisos. SUPER_ADMIN conserva acceso global. USER no obtiene administración aunque tenga permisos accidentales.
+
+| Operación | Ruta | Permiso |
+| --- | --- | --- |
+| Lista/detalle | GET `/admin/providers`, `/admin/providers/:id` | providers.read |
+| Crear/editar/desactivar | POST `/admin/providers`, PATCH `/admin/providers/:id` | providers.manage |
+| Conectividad | POST `/admin/providers/:id/test` | providers.manage |
+| Cargar texto de archivo M3U | POST `/admin/providers/:id/upload` | providers.manage |
+| Iniciar sync (202 con ID) | POST `/admin/providers/:id/sync` | sync.execute |
+| Fuentes importadas | GET `/admin/providers/:id/channels` | providers.read |
+| Historial | GET `/admin/providers/:id/sync-runs`, `/admin/sync-runs` | sync.history |
+| Vincular fuente canónica | PATCH `/admin/provider-channels/:id/channel` | providers.manage + channels.manage + streams.manage |
+| Crear/editar/desactivar canal | POST `/admin/channels`, PATCH/DELETE `/admin/channels/:id` | channels.manage |
+| Agregar señal manual | POST `/admin/channels/:id/streams` | streams.manage |
+| Editar/desactivar señal | PATCH/DELETE `/admin/streams/:id` | streams.manage |
+| Consultar señales (existente) | GET `/admin/channels/:id/streams` | streams.read |
+
+Listas aceptan `page`/`limit` (máximo 100); historial agrega `providerId`/`status`. `name`, `slug`, `type`, `config` son obligatorios al crear. Tipo y slug son inmutables. Config M3U_URL admite solo `url` HTTPS pública sin credenciales. M3U_UPLOAD usa `{}`. Credenciales M3U_URL admiten únicamente `token` Bearer write-only; envíalo por TLS. `priority` admite 0–100000. Solo ejecución manual (`syncMode=MANUAL`); no hay scheduler.
+
+Ejemplo de registro público, sin secretos:
+
+```json
+{
+  "name": "Lista autorizada A",
+  "slug": "lista-a",
+  "type": "M3U_URL",
+  "config": { "url": "https://tu-proveedor-autorizado.tld/catalogo.m3u" },
+  "priority": 10
+}
+```
+
+Para un archivo crea M3U_UPLOAD y envía su texto UTF-8 como `{ "content": "#EXTM3U\n..." }` a `/upload`; no es multipart. Playlist máximo 5 MiB/10000 entradas, request JSON máximo 6 MiB. Se guarda cifrada en la base y no se escribe al disco. La carga valida pero no sincroniza: después solicita `/sync` y consulta `/sync-runs`. `test` valida conectividad/playlist sin importar ni publicar. URLs privadas, redirects, proxies del entorno y contenido audiovisual no son permitidos. No se descarga video. Listas que requieran secretos en sus URLs de reproducción no están soportadas.
+
+IPTV-org sigue funcionando con `npm run sync:iptv-org`; utiliza el registro reservado y el mismo motor. Mantiene NSFW/blocklist, retries/timeouts, rollback por lote y retiro lógico. M3U no tiene clasificación NSFW verificable: revisar antes de publicar. MANUAL permite crear canales DRAFT, categorías/país ya registrados, logo/website y señales HLS u otros formatos públicos sin sincronización externa.
+
+No se fusionan canales por nombre ni tvg-id entre proveedores. Vincula fuentes explícitamente con `{ "channelId": 123 }`; mueve solo esa fuente y sus streams, conservando el canal original y sus decisiones/grants. Editar un canal crea overrides protegidos. En streams importados solo se permite modificar priority/isPreferred/isDisabled; el resto pertenece al proveedor. DELETE es lógico. Desactivar proveedor retira sus señales; reactivarlo requiere sync. Nunca modifica publicación, colecciones, ALLOW o DENY.
+
+HTTP ejecuta dentro del proceso sin cola durable: un reinicio interrumpe el trabajo, conserva lotes confirmados y obliga a repetir sync. Una ejecución abandonada se marca CANCELLED al siguiente intento con lock adquirido. Locks se distinguen por proveedor; segundo sync simultáneo retorna 409. Prioridades/preferencia preparan alternativas; no hay failover automático.
+
+XTREAM y REST_API se pueden registrar con `config.baseUrl` HTTPS y secretos separados, pero muestran `syncSupported=false`, rechazan sync y responden 501 en test. Faltan contrato autorizado y validación upstream; no hay URLs de reproducción con usuario/contraseña, bypass, proxy ni retransmisión.

@@ -17,7 +17,7 @@ class ProbeController {
 describe('Protecciones HTTP', () => {
   let app: INestApplication; let config: ConfigService<Environment,true>;
   beforeEach(async () => {
-    config = new ConfigService(validateEnvironment({ ...parse(readFileSync('.env.example')), SWAGGER_ENABLED: 'false', RATE_LIMIT_MAX: '2' })) as ConfigService<Environment,true>;
+    config = new ConfigService(validateEnvironment({ ...{ ...parse(readFileSync('.env.example')), PROVIDER_CREDENTIALS_KEY: Buffer.alloc(32,7).toString('base64') }, SWAGGER_ENABLED: 'false', RATE_LIMIT_MAX: '2' })) as ConfigService<Environment,true>;
     const module = await Test.createTestingModule({ imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 2 }])],
       controllers: [ProbeController], providers: [{ provide: ConfigService, useValue: config },{ provide: APP_GUARD, useClass: ConfigurableThrottlerGuard }] }).compile();
     app = module.createNestApplication(); configureApp(app,config); await app.init();

@@ -45,7 +45,7 @@ describe('Políticas y migraciones de seguridad', () => {
   it('construye metadatos con el driver MariaDB sin conexión ni synchronize', async () => {
     const db = new OfflineMariaDb({ type: 'mariadb',host: '127.0.0.1',username: 'offline',password: 'offline',database: 'hmodevelopers_iptv',entities: ENTITIES,synchronize: false });
     await db.prepare();
-    expect(db.entityMetadatas).toHaveLength(17); expect(db.isInitialized).toBe(false);
+    expect(db.entityMetadatas).toHaveLength(ENTITIES.length); expect(db.isInitialized).toBe(false);
     expect(db.getMetadata('User').columns.find(c => c.propertyName === 'passwordHash')?.isSelect).toBe(false);
   });
   it('la migración incorpora FK/uniques/checks sin borrar tablas ni datos IPTV', async () => {

@@ -22,7 +22,11 @@ export class IptvOrgClient implements CatalogProvider {
     return snapshot;
   }
 
-  private async fetch(name: keyof ProviderSnapshot): Promise<unknown[]> {
+  async testConnectivity(): Promise<void> {
+    if (!(await this.fetch('channels',{ retries: 0,timeout: 5000 })).length) throw new Error('Catálogo remoto vacío');
+  }
+
+  private async fetch(name: keyof ProviderSnapshot, limits?: { retries: number; timeout: number }): Promise<unknown[]> {
     const base = this.config.get('IPTV_ORG_API_URL', { infer: true }).replace(/\/$/, '');
     const agent = new Agent({
       lookup: (hostname, options, callback) => {
@@ -36,11 +40,11 @@ export class IptvOrgClient implements CatalogProvider {
       },
     });
     try {
-      const retries = this.config.get('IPTV_ORG_MAX_RETRIES', { infer: true });
+      const retries = limits?.retries ?? this.config.getOrThrow<number>('IPTV_ORG_MAX_RETRIES');
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
           const response = await firstValueFrom(this.http.get<unknown>(`${base}/${name}.json`, {
-            timeout: this.config.get('IPTV_ORG_REQUEST_TIMEOUT_MS', { infer: true }),
+            timeout: limits?.timeout ?? this.config.getOrThrow<number>('IPTV_ORG_REQUEST_TIMEOUT_MS'),
             httpsAgent: agent, maxRedirects: 0, proxy: false,
             maxContentLength: 64 * 1024 * 1024, responseType: 'json',
           }));

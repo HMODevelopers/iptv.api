@@ -1,3 +1,7 @@
+import { ProviderSyncEngine, ensureReservedProvider } from '../src/providers/sync-engine';
+import { ProviderType } from '../src/database/entities';
+import { AuditService } from '../src/security/audit.service';
+import { normalizeSnapshot } from '../src/providers/iptv-org/normalizer';
 import { SecurityModule } from '../src/security/security.module';
 import { AuthService } from '../src/security/auth.service';
 import { seedSecurity } from '../src/security/policy';
@@ -29,7 +33,7 @@ describe('Integración HTTP + TypeORM + sincronización (SQL.js aislado)', () =>
   let token: string; let app: INestApplication; let db: DataSource; let service: IptvOrgSyncService;
   const client = { source: 'iptv-org', fetchSnapshot: jest.fn() };
   beforeAll(async () => {
-    const env = validateEnvironment({ ...parse(readFileSync('.env.example')), NODE_ENV: 'test', RATE_LIMIT_MAX: '1000' });
+    const env = validateEnvironment({ ...{ ...parse(readFileSync('.env.example')), PROVIDER_CREDENTIALS_KEY: Buffer.alloc(32,7).toString('base64') }, NODE_ENV: 'test', RATE_LIMIT_MAX: '1000' });
     const module = await Test.createTestingModule({ imports: [
       ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true, load: [() => ({ ...env, ...authTestEnvironment() })] }),
       // Schema sync is exclusively for this ephemeral in-memory test DB.
@@ -139,10 +143,12 @@ describe('Integración HTTP + TypeORM + sincronización (SQL.js aislado)', () =>
     expect(await db.getRepository(Channel).count()).toBe(2);
   });
   it('revierte un lote fallido y reporta errores', async () => {
+    const provider = await ensureReservedProvider(db,ProviderType.IPTV_ORG);
+    const engine = new ProviderSyncEngine(db,app.get(ConfigService<Environment,true>),new AuditService(db));
     const runner = db.createQueryRunner();
     const createRunner = jest.spyOn(db,'createQueryRunner').mockReturnValueOnce(runner);
     const save = jest.spyOn(runner.manager.getRepository(Stream),'save').mockRejectedValueOnce(new Error('write failed'));
-    const stats = await service.sync();
+    const stats = await engine.sync(provider,async () => normalizeSnapshot(fixture()));
     expect(stats.errors).toBe(1); expect(stats.processed).toBe(0);
     expect(await db.getRepository(ChannelCategory).count()).toBe(3);
     save.mockRestore(); createRunner.mockRestore();
