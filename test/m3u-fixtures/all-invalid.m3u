@@ -1,0 +1,7 @@
+#EXTM3U
+#EXTINF:-1,Token
+https://cdn.public.tv/live.m3u8?token=secret
+#EXTINF:-1,Userinfo
+https://user:pass@cdn.public.tv/live.m3u8
+#EXTINF:-1,Private
+http://127.0.0.1/live.m3u8

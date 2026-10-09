@@ -1,3 +1,4 @@
+import { m3uFixture } from './m3u-fixture';
 import 'reflect-metadata';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -88,6 +89,18 @@ describe('Multiproveedor HTTP y persistencia (SQL.js aislado)', () => {
     const stream = await db.manager.findOneByOrFail(Stream,{}); expect(stream.providerChannelId).toBeDefined(); expect(stream.format).toBe('HLS');
     const history = await http().get(`/api/admin/sync-runs?providerId=${p.id}&status=SUCCESS&limit=1`).set('Authorization',`Bearer ${token}`).expect(200);
     expect(history.body.total).toBe(1);
+  });
+  it('persiste SUCCESS con descartes sin guardar credenciales y FAILED si todas son inválidas', async () => {
+    const p = await provider();
+    const stats = await engine.sync(p,async () => parseM3u(m3uFixture('mixed')));
+    expect(stats).toMatchObject({ processed: 1,discarded: 3,errors: 0 });
+    const run = await db.manager.findOneByOrFail(ProviderSyncRun,{ providerId: p.id });
+    expect(run).toMatchObject({ status: SyncStatus.SUCCESS,discarded: 3,errors: 0,errorCodes: [] });
+    expect((await db.manager.find(Stream)).map(s => s.url)).toEqual(['https://cdn.public.tv/live.m3u8']);
+    expect((await db.manager.findOneByOrFail(Provider,{ id: p.id })).lastSuccessfulSyncAt).not.toBeNull();
+    await expect(engine.sync(p,async () => parseM3u(m3uFixture('all-invalid')))).rejects.toThrow();
+    expect(await db.manager.countBy(ProviderSyncRun,{ providerId: p.id,status: SyncStatus.FAILED })).toBe(1);
+    expect(await db.manager.countBy(Stream,{ isAvailable: true })).toBe(1);
   });
   it('rechaza upload inválido y declara XTREAM/REST pendientes', async () => {
     const p = await provider(); await http().post(`/api/admin/providers/${p.id}/upload`).set('Authorization',`Bearer ${token}`).send({ content: 'bad' }).expect(400);

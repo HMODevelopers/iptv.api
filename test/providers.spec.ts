@@ -1,3 +1,4 @@
+import { m3uFixture } from './m3u-fixture';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 import { CredentialsService, credentialsKey } from '../src/providers/credentials.service';
@@ -21,6 +22,39 @@ describe('M3U y secretos', () => {
     expect(() => parseM3u(content)).toThrow();
   });
   it('limita número de registros', () => { expect(() => parseM3u('#EXTM3U\n'+('#EXTINF:-1,A\nhttps://cdn.public.tv/a\n').repeat(10001))).toThrow(); });
+  it.each(['standard','extended'])('acepta encabezado de fixture %s', name => {
+    expect(parseM3u(m3uFixture(name)).channels).toHaveLength(1);
+  });
+  it('acepta atributos en el encabezado estándar', () => {
+    expect(parseM3u(m3uFixture('standard').replace('#EXTM3U','#EXTM3U x-tvg-url="https://public.tv/epg.xml"')).channels).toHaveLength(1);
+  });
+  it('descarta entradas inseguras y conserva las válidas', () => {
+    const snapshot = parseM3u(m3uFixture('mixed'));
+    expect(snapshot.discarded).toBe(3);
+    expect(snapshot.channels.map(c => c.externalId)).toEqual(['valid']);
+    expect([...snapshot.streams.values()].flat().map(s => s.url)).toEqual(['https://cdn.public.tv/live.m3u8']);
+  });
+  it.each(['token','userinfo','private','all-invalid','hls-media'])('rechaza fixture sin catálogo válido %s', name => {
+    expect(() => parseM3u(m3uFixture(name))).toThrow();
+  });
+  it.each([
+    '#EXTINF:-1,Bad\nnot-a-url\n',
+    '#EXTINF:-1,Bad\nrtsp://cdn.public.tv/live\n',
+    '#EXTINF:-1,\nhttps://cdn.public.tv/live.m3u8\n',
+    `#EXTINF:-1,${'x'.repeat(256)}\nhttps://cdn.public.tv/live.m3u8\n`,
+    '#EXTINF:-1 tvg-logo="http://10.0.0.1/logo.png",Bad\nhttps://cdn.public.tv/live.m3u8\n',
+    '#EXTINF:-1 tvg-logo="https://public.tv/logo.png?token=secret",Bad\nhttps://cdn.public.tv/live.m3u8\n',
+    '#EXTINF:-1,Bad\n#EXTVLCOPT:http-referrer=https://public.tv/\nhttps://cdn.public.tv/live.m3u8\n',
+    '#EXTINF:-1,Bad\nhttps://[::ffff:127.0.0.1]/live\n',
+  ])('aísla validación de una entrada', entry => {
+    const snapshot = parseM3u(m3uFixture('standard')+entry);
+    expect(snapshot.discarded).toBe(1); expect(snapshot.channels).toHaveLength(1);
+  });
+  it('rechaza corrupción global incluso después de entradas válidas', () => {
+    for (const suffix of ['#EXT-X-ENDLIST','\ufffd','#EXTINF:broken','https://cdn.public.tv/orphan']) {
+      expect(() => parseM3u(m3uFixture('standard')+suffix)).toThrow();
+    }
+  });
   it('cifra autenticadamente, separa contexto y detecta modificaciones', () => {
     const service = new CredentialsService(new ConfigService({ PROVIDER_CREDENTIALS_KEY: randomBytes(32).toString('base64') }));
     const encrypted = service.encrypt('sensitive-value','credentials:1');

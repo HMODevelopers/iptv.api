@@ -380,3 +380,72 @@ No se fusionan canales por nombre ni tvg-id entre proveedores. Vincula fuentes e
 HTTP ejecuta dentro del proceso sin cola durable: un reinicio interrumpe el trabajo, conserva lotes confirmados y obliga a repetir sync. Una ejecución abandonada se marca CANCELLED al siguiente intento con lock adquirido. Locks se distinguen por proveedor; segundo sync simultáneo retorna 409. Prioridades/preferencia preparan alternativas; no hay failover automático.
 
 XTREAM y REST_API se pueden registrar con `config.baseUrl` HTTPS y secretos separados, pero muestran `syncSupported=false`, rechazan sync y responden 501 en test. Faltan contrato autorizado y validación upstream; no hay URLs de reproducción con usuario/contraseña, bypass, proxy ni retransmisión.
+
+## Providers iniciales
+
+El catálogo opcional v1 se registra con un comando independiente, sin alterar la
+migración histórica `MultiProvider1791300000000` ni iniciar la aplicación Nest:
+
+```bash
+npm run seed:providers
+```
+
+Requiere dependencias instaladas (`npm ci`), `.env` configurado con la configuración
+habitual (incluida `PROVIDER_CREDENTIALS_KEY`) y migraciones aplicadas manualmente.
+El comando usa el DataSource existente, acepta solamente MariaDB y la base
+`hmodevelopers_iptv`, comprueba migraciones pendientes, la migración multiproveedor,
+las columnas de Provider y la unicidad de slug. No ejecuta migraciones.
+Usa una transacción y un lock de seed; cierra la conexión e imprime un resumen.
+Ante un fallo revierte las inserciones y devuelve un código de salida distinto de cero.
+
+| Provider / slug | Tipo | Estado al crearse | Prioridad | Configuración |
+| --- | --- | --- | --- | --- |
+| IPTV-org / `iptv-org` | IPTV_ORG | Activo, sync habilitada como el bootstrap existente | 0 | `{}`; adaptador oficial https://iptv-org.github.io/api |
+| Manual / `manual` | MANUAL | Activo, sin sync | 0 | `{}`; sin URL ni credenciales |
+| Free-TV / `free-tv` | M3U_URL | Inactivo, sync deshabilitada | 100 | https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8 |
+| FreeCastHub Public IPTV / `freecasthub-public-iptv` | M3U_URL | Inactivo, sync deshabilitada | 110 | https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u |
+| RW1986 IPTV / `rw1986-iptv` | M3U_URL | Candidato inactivo, sync deshabilitada, requiere revisión | 200 | https://raw.githubusercontent.com/RW1986/IPTV/main/lineup.m3u8 |
+
+Free-TV aporta una playlist curada pública; FreeCastHub describe su colección como
+streams gratuitos de broadcasters públicos/oficiales; RW1986 reúne canales FAST y
+gratuitos de distintas plataformas y permanece candidato para revisión.
+Los enlaces a los repositorios y la necesidad de revisión se guardan en las
+**descripciones**: el contrato M3U_URL solo admite `{ "url": "..." }` en config.
+No existen campos isSystem o reviewRequired en el modelo actual.
+La URL de RW1986 usa el equivalente raw oficial porque el cliente existente
+bloquea redirecciones (`maxRedirects: 0`); no se relajó esa protección.
+La disponibilidad remota de estas fuentes no se comprueba durante el seed.
+
+Puede ejecutarse repetidamente: identifica por slug, crea únicamente faltantes y
+no modifica registros existentes, ni siquiera descripciones vacías. Conserva IDs,
+estados, prioridad, URL, config, secretos y fechas de los registros existentes.
+Si falta un reservado, lo crea con los defaults del bootstrap. Un slug con tipo
+incompatible aborta y revierte la transacción. La versión identifica las definiciones
+en código; no introduce tablas ni fuerza actualizaciones de catálogo existente.
+`createdBy` es null; no se atribuye la operación a SUPER_ADMIN ni se generan eventos
+de auditoría ficticios. El resumen de consola es el registro de esta operación.
+
+**Registrado** significa que existe Provider. **Activo** permite usar la fuente.
+**Sincronizado** significa que hubo una importación explícita.
+**Publicado** significa que un canal fue aprobado para exposición: un Provider
+activo no publica canales. Las futuras sincronizaciones mantienen nuevos canales
+como DRAFT conforme al motor existente.
+
+El seed no descarga playlists, contacta HTTP, sincroniza, crea canales/streams,
+modifica publicaciones, colecciones, permisos ALLOW/DENY ni usuarios. Solo se
+conecta a la base configurada para registrar Providers, sin guardar credenciales.
+
+Flujo posterior de SUPER_ADMIN:
+
+1. Ejecutar `npm run seed:providers`.
+2. Consultar `GET /api/admin/providers` y revisar la procedencia del proveedor.
+3. Activar con `PATCH /api/admin/providers/:id` y `{ "isActive": true }`.
+4. Probar con `POST /api/admin/providers/:id/test` (esta acción sí descarga).
+5. Habilitar `syncEnabled` explícitamente mediante PATCH cuando corresponda y ejecutar
+   `POST /api/admin/providers/:id/sync`.
+6. Consultar `GET /api/admin/providers/:id/sync-runs`.
+7. Revisar canales DRAFT, vincular duplicados si corresponde y publicar los seleccionados.
+
+La CLI exige el schema completo y todas las migraciones locales aplicadas. Las
+pruebas del seed usan SQL.js aislado; no prueban una MariaDB externa ni la disponibilidad
+de las playlists. El comando debe ejecutarlo el operador cuando decida registrar el catálogo.
