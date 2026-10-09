@@ -449,3 +449,10 @@ Flujo posterior de SUPER_ADMIN:
 La CLI exige el schema completo y todas las migraciones locales aplicadas. Las
 pruebas del seed usan SQL.js aislado; no prueban una MariaDB externa ni la disponibilidad
 de las playlists. El comando debe ejecutarlo el operador cuando decida registrar el catálogo.
+
+## Fase 4 — Stream health
+
+Health manual seguro, historial agregado, selección de playback y dashboard backend.
+Consulta [operación, endpoints, CLI y migración](docs/stream-health.md).
+`npm run check:streams -- --stream ID` usa el mismo motor que HTTP. Empieza con una
+fuente; después FreeCastHub, RW1986 y finalmente global. No hay cron automático.

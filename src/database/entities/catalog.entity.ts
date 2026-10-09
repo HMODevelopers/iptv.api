@@ -57,8 +57,16 @@ export enum StreamStatus { UNKNOWN = 'UNKNOWN', ONLINE = 'ONLINE', OFFLINE = 'OF
 @Entity('streams')
 @Unique('uq_stream_source_key', ['providerChannelId','identityKey'])
 @Index('idx_stream_channel_status', ['channelId','status'])
+@Index('idx_stream_health_checked', ['lastCheckedAt'])
 @Check('chk_stream_status', "`status` IN ('UNKNOWN','ONLINE','OFFLINE')")
 export class Stream {
+  @Column({ type: 'datetime', precision: 6, nullable: true }) lastSuccessAt!: Date | null;
+  @Column({ type: 'datetime', precision: 6, nullable: true }) lastFailureAt!: Date | null;
+  @Column({ type: 'int', nullable: true }) responseTimeMs!: number | null;
+  @Column({ type: 'int', nullable: true }) lastHttpStatus!: number | null;
+  @Column({ type: 'int', default: 0 }) consecutiveSuccesses!: number;
+  @Column({ type: 'int', default: 0 }) consecutiveFailures!: number;
+  @Column({ type: 'varchar', length: 32, nullable: true }) failureReason!: string | null;
   @ApiProperty({ nullable: true }) @Column({ type: 'int', nullable: true }) providerChannelId!: number | null;
   @ManyToOne(() => ProviderChannel, { onDelete: 'RESTRICT' }) @JoinColumn({ name: 'providerChannelId' }) providerChannel!: ProviderChannel | null;
   @ApiProperty() @Column({ type: 'int', default: 0 }) priority!: number;

@@ -2,6 +2,7 @@ import { credentialsKey } from './credentials-key';
 import { LogLevel } from '@nestjs/common';
 
 export interface Environment {
+  STREAM_HEALTH_TIMEOUT_MS: number; STREAM_HEALTH_MAX_RESPONSE_BYTES: number; STREAM_HEALTH_CONCURRENCY: number; STREAM_HEALTH_MAX_REDIRECTS: number; STREAM_HEALTH_BATCH_SIZE: number;
   PROVIDER_CREDENTIALS_KEY: string;
   NODE_ENV: string; APP_NAME: string; APP_HOST: string; PORT: number;
   API_PREFIX: string; API_VERSION: string; LOG_LEVEL: LogLevel;
@@ -24,6 +25,14 @@ export function validateEnvironment(input: Record<string, unknown>): Environment
     result[key] = value;
     return value;
   };
+  for (const [key, fallback, min, max] of [
+    ['STREAM_HEALTH_TIMEOUT_MS',8000,100,60000], ['STREAM_HEALTH_MAX_RESPONSE_BYTES',1048576,1024,4194304],
+    ['STREAM_HEALTH_CONCURRENCY',10,1,50], ['STREAM_HEALTH_MAX_REDIRECTS',2,0,5], ['STREAM_HEALTH_BATCH_SIZE',100,1,1000],
+  ] as const) {
+    const value = input[key] ?? String(fallback);
+    if (!/^\d+$/.test(String(value)) || Number(value) < min || Number(value) > max) throw new Error(`Número inválido: ${key}`);
+    result[key] = Number(value);
+  }
   credentialsKey(required('PROVIDER_CREDENTIALS_KEY'));
   const integer = (key: string, min: number, max: number) => {
     const value = required(key);

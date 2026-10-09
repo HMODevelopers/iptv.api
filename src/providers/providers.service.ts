@@ -146,7 +146,7 @@ export class ProvidersService {
       const identityKey = createHash('sha256').update(JSON.stringify([dto.feedId ?? null,url])).digest('hex');
       if (await m.existsBy(Stream,{ providerChannelId: link.id,identityKey })) throw new ConflictException('Stream ya registrado en fuente manual');
       const stream = await m.save(Stream,{ ...dto,url,identityKey,channelId,providerChannelId: link.id,feedId: dto.feedId ?? null,referrer: dto.referrer ?? null,userAgent: dto.userAgent ?? null,labels: dto.labels ?? [],
-        format: dto.format ?? streamFormat(url),status: StreamStatus.UNKNOWN,isAvailable: !dto.isDisabled });
+        format: dto.format ?? streamFormat(url),status: StreamStatus.UNKNOWN,isAvailable: true });
       await refreshCanonical(m,channelId);
       await this.audit.record(m,actor,'stream.create','stream',stream.id);
       const { identityKey: _key,...safe } = stream; void _key; return safe;
@@ -163,7 +163,7 @@ export class ProvidersService {
       const url = dto.url ? this.streamUrl(dto.url) : stream.url;
       const identityKey = createHash('sha256').update(JSON.stringify([dto.feedId ?? stream.feedId,url])).digest('hex');
       if ((dto.url || dto.feedId !== undefined) && await m.getRepository(Stream).createQueryBuilder('s').where('s.providerChannelId = :source AND s.identityKey = :key AND s.id != :id',{ source: link.id,key: identityKey,id }).getExists()) throw new ConflictException('Stream duplicado');
-      await m.update(Stream,id,{ ...dto,...(dto.url || dto.feedId !== undefined ? { url,identityKey } : {}),...(dto.isDisabled !== undefined ? { isAvailable: !dto.isDisabled && link.isActive && p.isActive } : {}) });
+      await m.update(Stream,id,{ ...dto,...(dto.url || dto.feedId !== undefined ? { url,identityKey } : {}),...(url !== stream.url || (dto.feedId !== undefined && dto.feedId !== stream.feedId) ? { status: StreamStatus.UNKNOWN,lastCheckedAt: null,lastSuccessAt: null,lastFailureAt: null,responseTimeMs: null,lastHttpStatus: null,consecutiveFailures: 0,consecutiveSuccesses: 0,failureReason: null } : {}) });
       await this.audit.record(m,actor,dto.isDisabled ? 'stream.disable' : 'stream.update','stream',id); return m.findOneByOrFail(Stream,{ id });
     });
   }

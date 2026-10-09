@@ -147,7 +147,7 @@ describe('Integración HTTP + TypeORM + sincronización (SQL.js aislado)', () =>
     const engine = new ProviderSyncEngine(db,app.get(ConfigService<Environment,true>),new AuditService(db));
     const runner = db.createQueryRunner();
     const createRunner = jest.spyOn(db,'createQueryRunner').mockReturnValueOnce(runner);
-    const save = jest.spyOn(runner.manager.getRepository(Stream),'save').mockRejectedValueOnce(new Error('write failed'));
+    const save = jest.spyOn(runner.manager.getRepository(Stream),'update').mockRejectedValueOnce(new Error('write failed'));
     const stats = await engine.sync(provider,async () => normalizeSnapshot(fixture()));
     expect(stats.errors).toBe(1); expect(stats.processed).toBe(0);
     expect(await db.getRepository(ChannelCategory).count()).toBe(3);

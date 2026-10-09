@@ -145,7 +145,24 @@ describe('Multiproveedor HTTP y persistencia (SQL.js aislado)', () => {
     await http().delete(`/api/admin/streams/${stream.id}`).set('Authorization',`Bearer ${token}`).expect(200);
     await engine.sync(p,async () => parseM3u(playlist));
     expect((await db.manager.findOneByOrFail(Channel,{ id: channel.id }))).toMatchObject({ name: 'Editorial',isActive: false });
-    expect((await db.manager.findOneByOrFail(Stream,{ id: stream.id })).isAvailable).toBe(false);
+    expect((await db.manager.findOneByOrFail(Stream,{ id: stream.id }))).toMatchObject({ isAvailable: true,isDisabled: true });
+  });
+  it('sync conserva health y retiro; URL nueva nace UNKNOWN; edición manual reinicia health', async () => {
+    const p = await provider(); await engine.sync(p,async () => parseM3u(playlist));
+    const original = await db.manager.findOneByOrFail(Stream,{});
+    const checked = new Date();
+    await db.manager.update(Stream,original.id,{ status: 'ONLINE' as Stream['status'],lastCheckedAt: checked,lastSuccessAt: checked,consecutiveSuccesses: 4,responseTimeMs: 123 });
+    await engine.sync(p,async () => parseM3u(playlist));
+    expect(await db.manager.findOneByOrFail(Stream,{ id: original.id })).toMatchObject({ status: 'ONLINE',consecutiveSuccesses: 4,responseTimeMs: 123 });
+    await engine.sync(p,async () => parseM3u(playlist.replace('live.m3u8','other.m3u8')));
+    expect(await db.manager.findOneByOrFail(Stream,{ id: original.id })).toMatchObject({ isAvailable: false,status: 'ONLINE',consecutiveSuccesses: 4 });
+    const replacement = await db.manager.findOneByOrFail(Stream,{ isAvailable: true });
+    expect(replacement).toMatchObject({ status: 'UNKNOWN',lastCheckedAt: null,consecutiveSuccesses: 0 });
+    const channel = await service.createChannel({ name: 'Manual reset' },actor);
+    const manual = await service.createStream(channel.id,{ title: 'Manual',url: 'https://public.tv/one.m3u8' },actor);
+    await db.manager.update(Stream,manual.id,{ status: 'ONLINE' as Stream['status'],lastCheckedAt: checked,lastSuccessAt: checked,consecutiveSuccesses: 3 });
+    await service.updateStream(manual.id,{ url: 'https://public.tv/two.m3u8' },actor);
+    expect(await db.manager.findOneByOrFail(Stream,{ id: manual.id })).toMatchObject({ status: 'UNKNOWN',lastCheckedAt: null,lastSuccessAt: null,consecutiveSuccesses: 0 });
   });
   it('CRUD manual y sincronización externa no retiran fuentes MANUAL', async () => {
     const r = await http().post('/api/admin/channels').set('Authorization',`Bearer ${token}`).send({ name: 'Manual' }).expect(201);

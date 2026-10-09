@@ -111,8 +111,13 @@ export class ProviderSyncEngine {
             const old = new Map(existing.map(s => [s.identityKey,s])); const retained = new Set<string>();
             for (const stream of snapshot.streams.get(item.externalId) ?? []) {
               retained.add(stream.identityKey); const prior = old.get(stream.identityKey);
-              await streamRepo.save(streamRepo.create({ ...prior,...stream,channelId: channel.id,providerChannelId: link.id,
-                isAvailable: item.isActive && !prior?.isDisabled,status: prior?.status ?? StreamStatus.UNKNOWN,lastCheckedAt: prior?.lastCheckedAt ?? null }));
+              if (prior) {
+                // Write imported fields only: a concurrent health check owns operational fields.
+                await streamRepo.update(prior.id,{ ...stream,channelId: channel.id,providerChannelId: link.id,isAvailable: item.isActive });
+              } else {
+                await streamRepo.save(streamRepo.create({ ...stream,channelId: channel.id,providerChannelId: link.id,
+                  isAvailable: item.isActive,status: StreamStatus.UNKNOWN,lastCheckedAt: null }));
+              }
               if (prior) counts.streamsUpdated++; else counts.streamsCreated++;
             }
             const removed = existing.filter(s => !retained.has(s.identityKey)).map(s => s.id);

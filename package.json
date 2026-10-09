@@ -21,7 +21,8 @@
     "sync:iptv-org": "ts-node src/cli/sync-iptv-org.ts",
     "sync:iptv-org:prod": "node dist/cli/sync-iptv-org.js",
     "bootstrap:super-admin": "node scripts/bootstrap-super-admin.cjs",
-    "seed:providers": "ts-node src/cli/seed-providers.ts"
+    "seed:providers": "ts-node src/cli/seed-providers.ts",
+    "check:streams": "ts-node src/cli/check-streams.ts"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.0",

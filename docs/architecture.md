@@ -103,3 +103,14 @@ No se modificaron migraciones históricas ni datos persistidos. SecuritySeed reg
 La validación automática usa HTTP real con NestJS, guards y persistencia TypeORM en SQL.js aislado, incluyendo sincronización con fixtures. El SQL de autorización se ejecuta en esas pruebas; los metadatos MariaDB y las sentencias de migración se verifican sin conexión. Esto no sustituye una ejecución posterior de integración en MariaDB autorizado para confirmar comportamiento del driver, bloqueos y concurrencia.
 
 La fase 3 agrega administración de proveedores, sincronización HTTP y edición manual del catálogo usando la misma política. EPG, VOD, configuración HTTP y frontend siguen fuera del alcance.
+
+## StreamHealthModule (Fase 4)
+
+StreamHealthChecker separa transporte HTTP limitado y validación de manifiestos;
+StreamHealthService gestiona worker pool, batches por ID, lock MariaDB global,
+auditoría y StreamHealthRun. StreamSelectionService aplica ranking determinístico
+y ChannelAccessService antes de playback. Los últimos resultados viven en Stream;
+los runs contienen agregados, sin filas por cada comprobación. Sync conserva health
+mediante escrituras limitadas a metadata; health condiciona updates por identidad/URL.
+Stats y dashboard usan agregaciones SQL. No hay scheduler, proxy ni descarga de video.
+Consulta [semántica, seguridad y procedimiento operativo](stream-health.md).

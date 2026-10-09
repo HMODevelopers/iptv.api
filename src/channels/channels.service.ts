@@ -46,7 +46,7 @@ export class ChannelsService {
     const privileges = catalogPrivileges(actor,scope,'streams.read');
     // Stream read permission authorizes the channel lookup in this administrative operation.
     const channel = await this.findRecord(id,actor,privileges.unrestrictedContent);
-    const [data,total] = await this.streams.findAndCount({ where: { channelId: id, ...(privileges.includeUnavailableStreams ? {} : { isAvailable: true }) }, order: { id: 'ASC' }, skip: (query.page - 1) * query.limit, take: query.limit });
+    const [data,total] = await this.streams.findAndCount({ where: { channelId: id, ...(privileges.includeUnavailableStreams ? {} : { isAvailable: true,isDisabled: false }) }, order: { id: 'ASC' }, skip: (query.page - 1) * query.limit, take: query.limit });
     return { channel, data, total, page: query.page, limit: query.limit, totalPages: Math.ceil(total / query.limit) };
   }
 }
